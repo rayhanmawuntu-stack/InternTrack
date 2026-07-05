@@ -24,8 +24,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Apply company calendar and profile updates
-        run: python scripts/apply_company_calendar.py
+      - name: Apply app updates
+        run: |
+          python scripts/apply_company_calendar.py
+          python scripts/even_dashboard_cards.py
 
       - name: Commit upgraded source and backend
         run: |
@@ -33,7 +35,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add src/app/App.tsx apps-script/Code.gs
-            git commit -m "Add PT KSB company holidays"
+            git commit -m "Align dashboard activity and notes cards"
             git push origin HEAD:${GITHUB_REF_NAME}
           fi
 
