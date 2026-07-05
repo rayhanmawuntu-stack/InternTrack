@@ -4,8 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "python scripts/integrate_report_entry_forms.py && vite build",
+    "dev": "python scripts/integrate_report_entry_forms.py && python scripts/filter_today_activity.py && vite",
+    "build": "python scripts/integrate_report_entry_forms.py && python scripts/filter_today_activity.py && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
