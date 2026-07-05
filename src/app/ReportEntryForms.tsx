@@ -89,7 +89,7 @@ export default function ReportEntryForms({ reportMonth, onAddActivity, onSaveAtt
     }
     const clockIn = absent ? null : toIso(attendance.date, attendance.clockIn);
     const clockOut = absent ? null : toIso(attendance.date, attendance.clockOut);
-    if (clockIn && clockOut && new Date(clockOut) <= new Date(clockIn)) {
+    if (clockIn && clockOut && new Date(clockOut).getTime() <= new Date(clockIn).getTime()) {
       setMessage("Clock-out must be later than clock-in.");
       return;
     }
