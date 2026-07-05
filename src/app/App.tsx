@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { STORE } from "../lib/cloudStore";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   Clock, Calendar, BarChart2, FileText, Settings, CheckCircle,
   LogOut, Plus, Edit3, LayoutDashboard, ClipboardList, StickyNote,
@@ -2163,6 +2165,8 @@ function KpiCard({ label, value, sub, trend }: { label:string; value:string; sub
 
 function ReportsView({ user, activities, attRecords }: { user:User; activities:ActivityEntry[]; attRecords:AttRecord[] }) {
   const [period, setPeriod] = useState<"week"|"month"|"quarter">("month");
+  const latestAttendanceDate = attRecords.map(record => record.date).sort().slice(-1)[0] || localDateKey(new Date());
+  const [reportMonth, setReportMonth] = useState(latestAttendanceDate.slice(0, 7));
   const PERIODS = [{ id:"week" as const, label:"This Week" }, { id:"month" as const, label:"This Month" }, { id:"quarter" as const, label:"This Quarter" }];
 
   const presentDays = attRecords.filter(r => r.clockIn).length;
@@ -2186,22 +2190,199 @@ function ReportsView({ user, activities, attRecords }: { user:User; activities:A
 
   const hasData = attRecords.length > 0 || activities.length > 0;
 
+  function exportMonthlyAttendancePdf() {
+    const [yearValue, monthValue] = reportMonth.split("-").map(Number);
+    if (!yearValue || !monthValue) return;
+
+    const monthIndex = monthValue - 1;
+    const daysInMonth = new Date(yearValue, monthValue, 0).getDate();
+    const profileSettings = LS.settings(user.id) || {};
+    const mentorName = String(profileSettings.profile?.mentor || "").trim() || "____________________________";
+    const holidays = LS.holidays();
+    const attendanceByDate = new Map(attRecords.map(record => [record.date, record]));
+    const activitiesByDate = new Map<string, string[]>();
+
+    activities.forEach(activity => {
+      const activityDate = new Date(activity.time);
+      if (Number.isNaN(activityDate.getTime())) return;
+      const dateKey = localDateKey(activityDate);
+      if (!dateKey.startsWith(reportMonth)) return;
+
+      const activityText = [activity.title, activity.description]
+        .map(value => String(value || "").trim())
+        .filter(Boolean)
+        .join(" - ");
+      if (!activityText) return;
+
+      const current = activitiesByDate.get(dateKey) || [];
+      current.push(activityText);
+      activitiesByDate.set(dateKey, current);
+    });
+
+    const formatPdfTime = (value: string | null | undefined) => {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      return date.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit", second:"2-digit", hour12:true });
+    };
+
+    const body: any[] = [];
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = new Date(yearValue, monthIndex, day, 12, 0, 0);
+      const dateKey = localDateKey(date);
+      const record = attendanceByDate.get(dateKey);
+      const holiday = holidays.find(item => item.date === dateKey);
+      const dayActivities = (activitiesByDate.get(dateKey) || []).join("; ");
+      const hasWorkData = Boolean(record?.clockIn || record?.clockOut || dayActivities);
+      const dateLabel = `${monthValue}/${day}/${yearValue}`;
+
+      let specialLabel = "";
+      let remarks = record?.type === "wfh" ? "WFH" : record?.type === "late" ? "LATE" : "";
+      let activityText = dayActivities;
+
+      if (record?.type === "absent") {
+        specialLabel = activityText ? `LEAVE OF ABSENCE (${activityText})` : "LEAVE OF ABSENCE";
+      } else if (!hasWorkData && holiday) {
+        const prefix = holiday.type === "company" ? "COMPANY MASS LEAVE" : "NATIONAL HOLIDAY";
+        specialLabel = `${prefix} (${holiday.title})`;
+      } else if (!hasWorkData && (date.getDay() === 0 || date.getDay() === 6)) {
+        specialLabel = "WEEKEND";
+      } else if (!activityText && record?.clockIn) {
+        activityText = record.type === "wfh" ? "Work from home" : "";
+      }
+
+      if (specialLabel) {
+        body.push([
+          { content:dateLabel, styles:{ halign:"center" } },
+          { content:specialLabel, colSpan:4, styles:{ halign:"center", fontStyle:"bold" } },
+        ]);
+      } else {
+        body.push([
+          dateLabel,
+          formatPdfTime(record?.clockIn),
+          formatPdfTime(record?.clockOut),
+          activityText,
+          remarks ? { content:remarks, styles:{ fontStyle:"italic", halign:"center" } } : "",
+        ]);
+      }
+    }
+
+    const document = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+    const pageWidth = document.internal.pageSize.getWidth();
+    const periodLabel = new Date(yearValue, monthIndex, 1)
+      .toLocaleDateString("en-US", { month:"long", year:"numeric" })
+      .toUpperCase();
+
+    document.setTextColor(0, 0, 0);
+    document.setFont("helvetica", "normal");
+    document.setFontSize(9);
+    document.text("Internal", pageWidth - 20, 12, { align:"right" });
+
+    document.setFont("helvetica", "bold");
+    document.setFontSize(13);
+    document.text("DAFTAR HADIR PKL/MAGANG", pageWidth / 2, 28, { align:"center" });
+
+    const labelX = 26;
+    const colonX = 50;
+    const valueX = 54;
+    const infoRows = [
+      ["NAMA", user.name.toUpperCase()],
+      ["BAGIAN", user.department.toUpperCase()],
+      ["PERIODE", periodLabel],
+    ];
+
+    document.setFontSize(8.5);
+    infoRows.forEach((row, index) => {
+      const y = 38 + index * 7;
+      document.setFont("helvetica", "normal");
+      document.text(row[0], labelX, y);
+      document.text(":", colonX, y);
+      document.setFont("helvetica", "bold");
+      document.text(row[1], valueX, y);
+    });
+
+    autoTable(document, {
+      startY: 57,
+      head: [["Date", "Clock In", "Clock Out", "Activities", "Remarks"]],
+      body,
+      theme: "grid",
+      margin: { left:21, right:21 },
+      tableWidth: 168,
+      styles: {
+        font:"helvetica",
+        fontSize:5.8,
+        cellPadding:0.45,
+        minCellHeight:4.1,
+        textColor:[0,0,0],
+        lineColor:[0,0,0],
+        lineWidth:0.15,
+        valign:"middle",
+        overflow:"linebreak",
+      },
+      headStyles: {
+        fillColor:[224,224,224],
+        textColor:[0,0,0],
+        fontStyle:"bold",
+        fontSize:6.2,
+        halign:"center",
+        lineColor:[0,0,0],
+        lineWidth:0.18,
+      },
+      columnStyles: {
+        0:{ cellWidth:18, halign:"center" },
+        1:{ cellWidth:22, halign:"center" },
+        2:{ cellWidth:22, halign:"center" },
+        3:{ cellWidth:85, halign:"center" },
+        4:{ cellWidth:21, halign:"center" },
+      },
+      rowPageBreak:"avoid",
+      showHead:"everyPage",
+    });
+
+    const tableFinalY = (document as jsPDF & { lastAutoTable?: { finalY:number } }).lastAutoTable?.finalY || 190;
+    let signatureY = Math.max(tableFinalY + 20, 218);
+    if (signatureY > 255) {
+      document.addPage();
+      signatureY = 35;
+    }
+
+    document.setFont("helvetica", "normal");
+    document.setFontSize(8.5);
+    document.text("Pelaksana Oleh", 25, signatureY);
+    document.text("Pembimbing Oleh", 135, signatureY);
+    document.text(user.name, 25, signatureY + 39, { maxWidth:55 });
+    document.text(mentorName, 135, signatureY + 39, { maxWidth:55 });
+
+    const safeName = user.name.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "") || "Intern";
+    document.save(`DAFTAR-HADIR-${safeName}-${reportMonth}.pdf`);
+  }
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-1 p-1 rounded-xl" style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(16px)", border:"1px solid rgba(255,255,255,0.38)" }}>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex gap-1 p-1 rounded-xl overflow-x-auto" style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(16px)", border:"1px solid rgba(255,255,255,0.38)", scrollbarWidth:"none" }}>
           {PERIODS.map(p => (
             <button key={p.id} onClick={() => setPeriod(p.id)}
-              className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap"
               style={period===p.id ? { background:"linear-gradient(135deg,#f472b6,#e11d48)", color:"#fff", boxShadow:"0 2px 10px rgba(225,29,72,0.28)" } : { color:"rgba(61,10,32,0.55)" }}>
               {p.label}
             </button>
           ))}
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all hover:scale-105"
-          style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(16px)", border:"1px solid rgba(255,255,255,0.38)", color:"#be185d" }}>
-          <Download size={13} /> Export PDF
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            type="month"
+            value={reportMonth}
+            onChange={event => setReportMonth(event.target.value)}
+            className="min-w-0 flex-1 sm:flex-none px-3 py-2 rounded-xl text-sm text-[#3d0a20] outline-none"
+            style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(16px)", border:"1px solid rgba(255,255,255,0.38)" }}
+          />
+          <button onClick={exportMonthlyAttendancePdf}
+            className="flex-none flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all hover:scale-105 whitespace-nowrap"
+            style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(16px)", border:"1px solid rgba(255,255,255,0.38)", color:"#be185d" }}>
+            <Download size={13} /> Export Monthly PDF
+          </button>
+        </div>
       </div>
 
       {!hasData ? (
