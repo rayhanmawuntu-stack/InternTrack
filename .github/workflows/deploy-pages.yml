@@ -28,14 +28,15 @@ jobs:
         run: |
           python scripts/apply_company_calendar.py
           python scripts/even_dashboard_cards.py
+          python scripts/monthly_attendance_pdf.py
 
       - name: Commit upgraded source and backend
         run: |
-          if ! git diff --quiet -- src/app/App.tsx apps-script/Code.gs; then
+          if ! git diff --quiet -- src/app/App.tsx apps-script/Code.gs package.json; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/app/App.tsx apps-script/Code.gs
-            git commit -m "Align dashboard activity and notes cards"
+            git add src/app/App.tsx apps-script/Code.gs package.json
+            git commit -m "Add formal monthly attendance PDF export"
             git push origin HEAD:${GITHUB_REF_NAME}
           fi
 
