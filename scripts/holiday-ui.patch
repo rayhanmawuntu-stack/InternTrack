@@ -1,0 +1,143 @@
+--- a/src/app/App.tsx
++++ b/src/app/App.tsx
+@@ -22,6 +22,7 @@
+ type AttRecord = { date: string; clockIn: string | null; clockOut: string | null; type?: "present" | "late" | "wfh" | "absent"; };
+ type NoteTag = "Work Log" | "Learnings" | "Blockers" | "Tomorrow";
+ type Note = { id: string; title: string; content: string; tags: NoteTag[]; createdAt: string; updatedAt: string; gradient: number; };
++type IndonesiaHoliday = { date: string; title: string; type: "national" | "collective"; source?: string; };
+ 
+ /* ─── Google Sheets data helpers (memory only while open) ── */
+ const LS = {
+@@ -39,6 +40,7 @@
+   saveNotes:  (uid: string, n: Note[]) => STORE.setItem(`it_notesv2_${uid}`, JSON.stringify(n)),
+   settings:   (uid: string): any => { try { return JSON.parse(STORE.getItem(`it_settings_${uid}`) || "null"); } catch { return null; } },
+   saveSettings: (uid: string, value: any) => STORE.setItem(`it_settings_${uid}`, JSON.stringify(value)),
++  holidays:   (): IndonesiaHoliday[] => { try { return JSON.parse(STORE.getItem("it_holidays_id") || "[]"); } catch { return []; } },
+ };
+ 
+ /* ─── Constants ──────────────────────────────────────────── */
+@@ -658,7 +660,7 @@
+         {navTab === "attendance" && <AttendanceView user={user} now={now} cloudRevision={cloudRevision} />}
+         {navTab === "settings"   && <SettingsView user={user} workHours={workHours} onWorkHoursChange={(h) => { setWorkHours(h); LS.saveWorkHours(user.id, h); }} onUserChange={(u) => { setUser(u); const users = LS.users().map(x => x.id === u.id ? u : x); LS.saveUsers(users); }} onSignOut={() => setScreen("signin")} />}
+         {navTab === "reports"    && <ReportsView user={user} activities={activities} attRecords={LS.att(user.id)} />}
+-        {navTab === "calendar"   && <CalendarView user={user} now={now} />}
++        {navTab === "calendar"   && <CalendarView user={user} now={now} cloudRevision={cloudRevision} />}
+         {navTab === "notes"      && <NotesView user={user} now={now} />}
+         {navTab !== "dashboard" && navTab !== "attendance" && navTab !== "settings" && navTab !== "reports" && navTab !== "calendar" && navTab !== "notes" && (
+           <div className="flex items-center justify-center h-64">
+@@ -1501,10 +1503,11 @@
+   return `${h12}${mn > 0 ? `:${String(mn).padStart(2,"0")}` : ""} ${ap}`;
+ }
+ 
+-function CalendarView({ user, now }: { user:User; now:Date }) {
++function CalendarView({ user, now, cloudRevision }: { user:User; now:Date; cloudRevision:number }) {
+   const todayStr = localDateKey(now);
+   const [selDate, setSelDate]   = useState(todayStr);
+   const [events, setEvents]     = useState<CalEvent[]>(() => CAL_LS(user.id));
++  const [holidays, setHolidays] = useState<IndonesiaHoliday[]>(() => LS.holidays());
+   const [selEv, setSelEv]       = useState<string|null>(null);
+   const [showForm, setShowForm] = useState(false);
+   const [form, setForm]         = useState({ title:"", startTime:"09:00", endTime:"10:00", color:EV_COLORS[0] });
+@@ -1514,8 +1517,14 @@
+     void STORE.syncNow().catch(error => console.error("Calendar sync failed.", error));
+   }, [events]);
+ 
++  useEffect(() => {
++    setEvents(CAL_LS(user.id));
++    setHolidays(LS.holidays());
++  }, [user.id, cloudRevision]);
++
+   const selDateObj  = new Date(selDate + "T12:00:00");
+   const dayEvents   = assignTracks(events.filter(e => e.date === selDate));
++  const dayHoliday  = holidays.find(h => h.date === selDate) ?? null;
+   const selEvObj    = selEv ? events.find(e => e.id === selEv) ?? null : null;
+   const isToday     = selDate === todayStr;
+   const curH        = now.getHours() + now.getMinutes() / 60;
+@@ -1562,6 +1571,22 @@
+         </button>
+       </div>
+ 
++      {dayHoliday && (
++        <div className="flex items-start gap-3 rounded-2xl px-4 py-3"
++          style={{ background:"rgba(167,139,250,0.20)", border:"1px solid rgba(167,139,250,0.38)", backdropFilter:"blur(18px)", WebkitBackdropFilter:"blur(18px)" }}>
++          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
++            style={{ background:"rgba(124,58,237,0.16)", color:"#7c3aed" }}>
++            <Calendar size={17} />
++          </div>
++          <div className="min-w-0">
++            <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color:"#7c3aed" }}>
++              Indonesia National Holiday
++            </p>
++            <p className="text-sm font-bold text-[#3d0a20] mt-0.5">{dayHoliday.title}</p>
++          </div>
++        </div>
++      )}
++
+       {/* ── Main clock card ── */}
+       <div className="rounded-2xl overflow-hidden"
+         style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(22px)", WebkitBackdropFilter:"blur(22px)", border:"1px solid rgba(255,255,255,0.40)", boxShadow:"0 6px 40px rgba(180,30,80,0.10), inset 0 1px 0 rgba(255,255,255,0.58)" }}>
+@@ -1744,8 +1769,9 @@
+           const isSel = ds === selDate;
+           const isT   = ds === todayStr;
+           const evCnt = events.filter(e => e.date === ds).length;
++          const holiday = holidays.find(h => h.date === ds);
+           return (
+-            <button key={i} onClick={() => { setSelDate(ds); setSelEv(null); setShowForm(false); }}
++            <button key={i} title={holiday ? holiday.title : undefined} onClick={() => { setSelDate(ds); setSelEv(null); setShowForm(false); }}
+               className="flex flex-col items-center gap-1 px-5 py-3 rounded-2xl shrink-0 transition-all hover:scale-[1.03]"
+               style={isSel
+                 ? { background:"linear-gradient(135deg,#f472b6,#e11d48)", boxShadow:"0 4px 16px rgba(225,29,72,0.38)" }
+@@ -1758,9 +1784,11 @@
+                 {d.getDate()}
+               </span>
+               <div className="h-3 flex items-center justify-center">
+-                {evCnt > 0
+-                  ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background:isSel?"rgba(255,255,255,0.28)":"rgba(244,114,182,0.22)", color:isSel?"white":"#be185d" }}>{evCnt}</span>
+-                  : isT && !isSel ? <span className="w-1.5 h-1.5 rounded-full" style={{ background:"#e11d48" }} /> : null
++                {holiday
++                  ? <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full" style={{ background:isSel?"rgba(255,255,255,0.28)":"rgba(167,139,250,0.24)", color:isSel?"white":"#7c3aed" }}>LIBUR</span>
++                  : evCnt > 0
++                    ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background:isSel?"rgba(255,255,255,0.28)":"rgba(244,114,182,0.22)", color:isSel?"white":"#be185d" }}>{evCnt}</span>
++                    : isT && !isSel ? <span className="w-1.5 h-1.5 rounded-full" style={{ background:"#e11d48" }} /> : null
+                 }
+               </div>
+             </button>
+@@ -1784,6 +1812,7 @@
+ function AttendanceView({ user, now, cloudRevision }: { user:User; now:Date; cloudRevision:number }) {
+   const [viewDate, setViewDate] = useState(new Date(now.getFullYear(), now.getMonth(), 1));
+   const [attRecords, setAttRecords] = useState<AttRecord[]>(() => LS.att(user.id));
++  const [holidays, setHolidays] = useState<IndonesiaHoliday[]>(() => LS.holidays());
+   const [showLogForm, setShowLogForm] = useState(false);
+   const [logForm, setLogForm] = useState({
+     date: (() => { const d = new Date(now); d.setDate(d.getDate()-1); return localDateKey(d); })(),
+@@ -1795,6 +1824,7 @@
+ 
+   useEffect(() => {
+     setAttRecords(LS.att(user.id));
++    setHolidays(LS.holidays());
+   }, [user.id, cloudRevision]);
+ 
+   function saveRecord() {
+@@ -1838,9 +1868,10 @@
+ 
+   function statusForDate(d: Date): AttStatus {
+     if (d > now && d.toDateString() !== now.toDateString()) return "future";
++    const iso = localDateKey(d);
++    if (holidays.some(h => h.date === iso)) return "holiday";
+     const dow = d.getDay();
+     if (dow === 0 || dow === 6) return "holiday";
+-    const iso = localDateKey(d);
+     const rec = attRecords.find(r => r.date === iso);
+     if (!rec) return d < now ? "absent" : "future";
+     if (rec.type) return rec.type;
+@@ -1921,8 +1952,9 @@
+             {records.map((r,i) => {
+               const isToday = r.date.toDateString() === now.toDateString();
+               const m = STATUS_META[r.status];
++              const holiday = holidays.find(h => h.date === localDateKey(r.date));
+               return (
+-                <div key={i} className="aspect-square flex flex-col items-center justify-center rounded-xl transition-all"
++                <div key={i} title={holiday ? holiday.title : undefined} className="aspect-square flex flex-col items-center justify-center rounded-xl transition-all"
+                   style={r.status==="future" ? { background:"rgba(255,255,255,0.08)" } : isToday ? { background:"linear-gradient(135deg,#f472b6,#e11d48)", boxShadow:"0 2px 10px rgba(225,29,72,0.35)" } : { background:m.bg }}>
+                   <span className="text-xs font-semibold leading-none" style={{ color: isToday?"#fff":r.status==="future"?"rgba(61,10,32,0.25)":m.color }}>{r.date.getDate()}</span>
+                   {r.status !== "future" && !isToday && <span className="w-1 h-1 rounded-full mt-0.5" style={{ background:m.dot }} />
