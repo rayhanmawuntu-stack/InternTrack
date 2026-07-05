@@ -17,6 +17,7 @@ const INTERNTRACK_ACTIVITIES_SHEET_NAME = 'InternTrackActivities';
 const INTERNTRACK_NOTES_SHEET_NAME = 'InternTrackNotes';
 const INTERNTRACK_CALENDAR_SHEET_NAME = 'InternTrackCalendar';
 const INTERNTRACK_SETTINGS_SHEET_NAME = 'InternTrackSettings';
+const INTERNTRACK_HOLIDAYS_SHEET_NAME = 'InternTrackHolidays';
 const INTERNTRACK_HEADERS = [
   'workspace_id',
   'storage_key',
@@ -57,6 +58,13 @@ const INTERNTRACK_SETTINGS_HEADERS = [
   'clock_reminder', 'daily_summary', 'weekly_report', 'mentor_updates',
   'system_alerts', 'quick_note', 'updated_at'
 ];
+const INTERNTRACK_HOLIDAYS_HEADERS = [
+  'date', 'title', 'type', 'country', 'source', 'updated_at'
+];
+const INTERNTRACK_HOLIDAY_CALENDAR_IDS = [
+  'id.indonesian#holiday@group.v.calendar.google.com',
+  'en.indonesian#holiday@group.v.calendar.google.com'
+];
 const INTERNTRACK_CHUNK_SIZE = 45000;
 
 function setup() {
@@ -74,9 +82,12 @@ function setup() {
   prepareReadableSheet_(getNotesSheet_(), INTERNTRACK_NOTES_HEADERS);
   prepareReadableSheet_(getCalendarSheet_(), INTERNTRACK_CALENDAR_HEADERS);
   prepareReadableSheet_(getSettingsSheet_(), INTERNTRACK_SETTINGS_HEADERS);
+  prepareReadableSheet_(getHolidaysSheet_(), INTERNTRACK_HOLIDAYS_HEADERS);
 
   rebuildAllReadableMirrors_();
-  return 'InternTrack backend is ready. All app data is stored in Sheets and mirrored into readable tabs.';
+  syncIndonesiaHolidays();
+  ensureHolidaySyncTrigger_();
+  return 'InternTrack backend is ready. App data and Indonesian national holidays are stored in Sheets.';
 }
 
 function doGet(e) {
@@ -86,16 +97,25 @@ function doGet(e) {
     let payload;
 
     if (action === 'dump') {
+      const workspaceId = requireWorkspace_(params.workspaceId);
+      maybeSyncIndonesiaHolidays_();
+      const data = dumpWorkspace_(workspaceId);
+      const holidays = readIndonesiaHolidays_();
+      data.it_holidays_id = {
+        value: JSON.stringify(holidays),
+        deleted: false,
+        updatedAt: holidays.length ? holidays[0].updatedAt : new Date().toISOString()
+      };
       payload = {
         ok: true,
-        data: dumpWorkspace_(requireWorkspace_(params.workspaceId)),
+        data: data,
         serverTime: new Date().toISOString()
       };
     } else {
       payload = {
         ok: true,
         service: 'InternTrack Google Sheets backend',
-        version: 4,
+        version: 6,
         serverTime: new Date().toISOString()
       };
     }
@@ -104,6 +124,142 @@ function doGet(e) {
   } catch (error) {
     return output_({ ok: false, error: String(error && error.message || error) }, e && e.parameter && e.parameter.callback);
   }
+}
+
+/**
+ * Imports Indonesia's national-holiday calendar into InternTrackHolidays.
+ * Google Calendar is the primary source. The official 2026 national-holiday
+ * schedule is bundled as a fallback so the app remains correct even before
+ * Calendar read access is approved.
+ */
+function syncIndonesiaHolidays() {
+  const now = new Date();
+  const startYear = now.getFullYear() - 1;
+  const endYear = now.getFullYear() + 1;
+  const updatedAt = new Date().toISOString();
+  const byDate = {};
+  let source = 'Google Calendar — Holidays in Indonesia';
+
+  try {
+    let calendar = null;
+    for (let index = 0; index < INTERNTRACK_HOLIDAY_CALENDAR_IDS.length && !calendar; index += 1) {
+      calendar = CalendarApp.getCalendarById(INTERNTRACK_HOLIDAY_CALENDAR_IDS[index]);
+    }
+    if (!calendar) throw new Error('Indonesia holiday calendar was not available.');
+
+    const start = new Date(startYear, 0, 1);
+    const end = new Date(endYear + 1, 0, 1);
+    calendar.getEvents(start, end).forEach(function(event) {
+      if (!event.isAllDayEvent()) return;
+      const title = String(event.getTitle() || '').trim();
+      if (!title || /cuti bersama|collective leave/i.test(title)) return;
+      const date = Utilities.formatDate(event.getStartTime(), 'Asia/Jakarta', 'yyyy-MM-dd');
+      const year = Number(date.slice(0, 4));
+      if (year < startYear || year > endYear) return;
+      byDate[date] = {
+        date: date,
+        title: title,
+        type: 'national',
+        country: 'Indonesia',
+        source: source,
+        updatedAt: updatedAt
+      };
+    });
+  } catch (error) {
+    source = 'Official Indonesia 2026 national-holiday schedule (bundled fallback)';
+    console.log('Holiday calendar import used fallback: ' + String(error && error.message || error));
+  }
+
+  indonesiaNationalHolidays2026_().forEach(function(holiday) {
+    byDate[holiday.date] = {
+      date: holiday.date,
+      title: holiday.title,
+      type: 'national',
+      country: 'Indonesia',
+      source: holiday.source || 'SKB 3 Menteri — Libur Nasional 2026',
+      updatedAt: updatedAt
+    };
+  });
+
+  const holidays = Object.keys(byDate)
+    .sort()
+    .map(function(date) { return byDate[date]; });
+
+  const sheet = getHolidaysSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, INTERNTRACK_HOLIDAYS_HEADERS.length).clearContent();
+  }
+  if (holidays.length) {
+    const rows = holidays.map(function(holiday) {
+      return [holiday.date, holiday.title, holiday.type, holiday.country, holiday.source, holiday.updatedAt];
+    });
+    sheet.getRange(2, 1, rows.length, INTERNTRACK_HOLIDAYS_HEADERS.length).setValues(rows);
+  }
+
+  PropertiesService.getScriptProperties().setProperty('INTERNTRACK_HOLIDAYS_SYNCED_AT', updatedAt);
+  return 'Synced ' + holidays.length + ' Indonesia national holidays.';
+}
+
+function maybeSyncIndonesiaHolidays_() {
+  const properties = PropertiesService.getScriptProperties();
+  const lastSync = Date.parse(properties.getProperty('INTERNTRACK_HOLIDAYS_SYNCED_AT') || '') || 0;
+  const sheet = getHolidaysSheet_();
+  const stale = Date.now() - lastSync > 24 * 60 * 60 * 1000;
+  if (sheet.getLastRow() < 2 || stale) syncIndonesiaHolidays();
+}
+
+function ensureHolidaySyncTrigger_() {
+  const functionName = 'syncIndonesiaHolidays';
+  const exists = ScriptApp.getProjectTriggers().some(function(trigger) {
+    return trigger.getHandlerFunction() === functionName;
+  });
+  if (!exists) {
+    ScriptApp.newTrigger(functionName).timeBased().everyDays(1).atHour(3).create();
+  }
+}
+
+function readIndonesiaHolidays_() {
+  const sheet = getHolidaysSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const rows = sheet.getRange(2, 1, lastRow - 1, INTERNTRACK_HOLIDAYS_HEADERS.length).getValues();
+  return rows
+    .filter(function(row) { return String(row[0] || '').trim(); })
+    .map(function(row) {
+      return {
+        date: String(row[0] || ''),
+        title: String(row[1] || ''),
+        type: String(row[2] || 'national'),
+        country: String(row[3] || 'Indonesia'),
+        source: String(row[4] || ''),
+        updatedAt: normalizeDate_(row[5])
+      };
+    })
+    .sort(function(a, b) { return a.date.localeCompare(b.date); });
+}
+
+function indonesiaNationalHolidays2026_() {
+  const source = 'SKB 3 Menteri — Libur Nasional 2026';
+  return [
+    { date: '2026-01-01', title: 'Tahun Baru Masehi', source: source },
+    { date: '2026-01-16', title: 'Isra Mikraj Nabi Muhammad SAW', source: source },
+    { date: '2026-02-17', title: 'Tahun Baru Imlek 2577 Kongzili', source: source },
+    { date: '2026-03-19', title: 'Hari Suci Nyepi — Tahun Baru Saka 1948', source: source },
+    { date: '2026-03-21', title: 'Idulfitri 1447 Hijriah', source: source },
+    { date: '2026-03-22', title: 'Idulfitri 1447 Hijriah', source: source },
+    { date: '2026-04-03', title: 'Wafat Yesus Kristus', source: source },
+    { date: '2026-04-05', title: 'Kebangkitan Yesus Kristus — Paskah', source: source },
+    { date: '2026-05-01', title: 'Hari Buruh Internasional', source: source },
+    { date: '2026-05-14', title: 'Kenaikan Yesus Kristus', source: source },
+    { date: '2026-05-27', title: 'Iduladha 1447 Hijriah', source: source },
+    { date: '2026-05-31', title: 'Hari Raya Waisak 2570 BE', source: source },
+    { date: '2026-06-01', title: 'Hari Lahir Pancasila', source: source },
+    { date: '2026-06-16', title: 'Tahun Baru Islam 1448 Hijriah', source: source },
+    { date: '2026-08-17', title: 'Hari Kemerdekaan Republik Indonesia', source: source },
+    { date: '2026-08-25', title: 'Maulid Nabi Muhammad SAW', source: source },
+    { date: '2026-12-25', title: 'Hari Raya Natal', source: source }
+  ];
 }
 
 function doPost(e) {
@@ -189,8 +345,6 @@ function saveBatch_(workspaceId, changes) {
       ? sheet.getRange(2, 1, lastRow - 1, INTERNTRACK_HEADERS.length).getValues()
       : [];
 
-    // Keep the newest server-side timestamp per key. This prevents a delayed
-    // request from an older device from overwriting a newer clock-in/out or profile.
     const newestStampByKey = {};
     existing.forEach(function(row) {
       if (String(row[0]) !== workspaceId) return;
@@ -258,8 +412,6 @@ function saveBatch_(workspaceId, changes) {
       sheet.getRange(2, 1, nextRows.length, INTERNTRACK_HEADERS.length).setValues(nextRows);
     }
 
-    // Keep the human-readable tabs fully aligned with the canonical data after
-    // every accepted write, not only profile changes.
     syncReadableMirrors_(workspaceId, nextRows);
 
     return { saved: accepted.length, skippedAsStale: skippedAsStale };
@@ -581,6 +733,14 @@ function getCalendarSheet_() {
   return sheet;
 }
 
+function getHolidaysSheet_() {
+  const spreadsheet = getSpreadsheet_();
+  let sheet = spreadsheet.getSheetByName(INTERNTRACK_HOLIDAYS_SHEET_NAME);
+  if (!sheet) sheet = spreadsheet.insertSheet(INTERNTRACK_HOLIDAYS_SHEET_NAME);
+  ensureHeaders_(sheet, INTERNTRACK_HOLIDAYS_HEADERS);
+  return sheet;
+}
+
 function getSettingsSheet_() {
   const spreadsheet = getSpreadsheet_();
   let sheet = spreadsheet.getSheetByName(INTERNTRACK_SETTINGS_SHEET_NAME);
@@ -632,14 +792,14 @@ function safeJsonParse_(value, fallback) {
 }
 
 function encodeValue_(value) {
-  return Utilities.base64EncodeWebSafe(String(value || ''), Utilities.Charset.UTF_8);
+  return Utilities.base64EncodeWebSafe(String(value || '')); // Apps Script encodes strings as UTF-8
 }
 
 function decodeValue_(value, encoding) {
   if (encoding !== 'base64url') return String(value || '');
   if (!value) return '';
   const bytes = Utilities.base64DecodeWebSafe(value);
-  return Utilities.newBlob(bytes).getDataAsString(Utilities.Charset.UTF_8);
+  return Utilities.newBlob(bytes).getDataAsString(); // Defaults to UTF-8
 }
 
 function splitChunks_(value) {
