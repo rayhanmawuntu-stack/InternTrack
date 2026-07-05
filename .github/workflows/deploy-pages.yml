@@ -24,14 +24,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Apply InternTrack v8 upgrade
-        run: |
-          cat scripts/v8-sync-and-form.patch.b64.* | base64 --decode > /tmp/interntrack-v8.patch
-          if git apply --check /tmp/interntrack-v8.patch; then
-            git apply /tmp/interntrack-v8.patch
-          else
-            echo "Upgrade patch is already applied."
-          fi
+      - name: Apply company calendar and profile updates
+        run: python scripts/apply_company_calendar.py
 
       - name: Commit upgraded source and backend
         run: |
@@ -39,7 +33,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add src/app/App.tsx apps-script/Code.gs
-            git commit -m "Fix Sheets UTF-8 sync and profile fields"
+            git commit -m "Add PT KSB company holidays"
             git push origin HEAD:${GITHUB_REF_NAME}
           fi
 
