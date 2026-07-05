@@ -810,9 +810,9 @@ function InternTrackApp() {
           </div>
 
           {/* Activity + Notes */}
-          <div className="it-dashboard-lower grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="it-dashboard-lower grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
             {/* Activity */}
-            <GlassCard noPad>
+            <GlassCard noPad className="it-dashboard-panel h-full min-h-[440px]">
               <div className="flex items-center justify-between px-5 pt-5 pb-3" style={{ borderBottom:"1px solid rgba(255,255,255,0.28)" }}>
                 <div className="flex items-center gap-2">
                   <ClipboardList size={15} className="text-pink-300" />
@@ -823,9 +823,11 @@ function InternTrackApp() {
                 </span>
               </div>
 
-              <div className="overflow-y-auto flex-1 min-h-0 px-5 py-3 space-y-0.5" style={{ maxHeight:"min(240px, 35dvh)" }}>
+              <div className="overflow-y-auto flex-1 min-h-0 px-5 py-3 space-y-0.5" style={{ minHeight:202 }}>
                 {activities.length === 0
-                  ? <EmptyState icon={<ClipboardList size={20} className="text-pink-200" />} text="No activity logged yet." sub="Start by logging what you're working on." />
+                  ? <div className="h-full flex items-center justify-center">
+                      <EmptyState icon={<ClipboardList size={20} className="text-pink-200" />} text="No activity logged yet." sub="Start by logging what you're working on." />
+                    </div>
                   : activities.map(a => (
                     <div key={a.id} className="flex items-start gap-3 py-2.5 group" style={{ borderBottom:"1px solid rgba(255,255,255,0.2)" }}>
                       <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5" style={{ background:DOT_BG[a.color] }}>
@@ -873,7 +875,10 @@ function InternTrackApp() {
                 </div>
               )}
 
-              <div className="px-5 pb-5 pt-3 shrink-0">
+              <div className="px-5 pb-5 pt-2 shrink-0" style={{ borderTop:"1px solid rgba(255,255,255,0.25)" }}>
+                <p className="text-[11px] mb-3" style={{ color:"rgba(61,10,32,0.4)" }}>
+                  {activities.length} {activities.length === 1 ? "activity" : "activities"} logged today
+                </p>
                 <GradientButton onClick={() => setShowActForm(v => !v)} disabled={false} dimmed={false} dimStyle={{}}>
                   <Plus size={14} /> Log New Activity
                 </GradientButton>
@@ -881,7 +886,7 @@ function InternTrackApp() {
             </GlassCard>
 
             {/* Notes */}
-            <GlassCard noPad>
+            <GlassCard noPad className="it-dashboard-panel h-full min-h-[440px]">
               <div className="flex items-center justify-between px-5 pt-5 pb-3" style={{ borderBottom:"1px solid rgba(255,255,255,0.28)" }}>
                 <div className="flex items-center gap-2">
                   <FileText size={15} className="text-pink-300" />
@@ -1397,9 +1402,9 @@ function NotesView({ user, now }: { user: User; now: Date }) {
 }
 
 /* ─── Shared sub-components ──────────────────────────────── */
-function GlassCard({ children, noPad = false }: { children: React.ReactNode; noPad?: boolean }) {
+function GlassCard({ children, noPad = false, className = "" }: { children: React.ReactNode; noPad?: boolean; className?: string }) {
   return (
-    <div className={`rounded-2xl ${noPad ? "" : "p-5"} flex flex-col`}
+    <div className={`rounded-2xl ${noPad ? "" : "p-5"} flex flex-col ${className}`}
       style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(22px)", WebkitBackdropFilter:"blur(22px)", border:"1px solid rgba(255,255,255,0.40)", boxShadow:"0 6px 40px rgba(180,30,80,0.10), inset 0 1px 0 rgba(255,255,255,0.58)" }}>
       {children}
     </div>
