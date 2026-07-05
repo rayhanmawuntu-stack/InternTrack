@@ -22,6 +22,7 @@ type ActivityEntry = {
 type AttRecord = { date: string; clockIn: string | null; clockOut: string | null; type?: "present" | "late" | "wfh" | "absent"; };
 type NoteTag = "Work Log" | "Learnings" | "Blockers" | "Tomorrow";
 type Note = { id: string; title: string; content: string; tags: NoteTag[]; createdAt: string; updatedAt: string; gradient: number; };
+type CalendarHoliday = { date: string; title: string; type: "national" | "company" | "collective"; source?: string; };
 
 /* ─── Google Sheets data helpers (memory only while open) ── */
 const LS = {
@@ -39,6 +40,7 @@ const LS = {
   saveNotes:  (uid: string, n: Note[]) => STORE.setItem(`it_notesv2_${uid}`, JSON.stringify(n)),
   settings:   (uid: string): any => { try { return JSON.parse(STORE.getItem(`it_settings_${uid}`) || "null"); } catch { return null; } },
   saveSettings: (uid: string, value: any) => STORE.setItem(`it_settings_${uid}`, JSON.stringify(value)),
+  holidays:   (): CalendarHoliday[] => { try { return JSON.parse(STORE.getItem("it_holidays_id") || "[]"); } catch { return []; } },
 };
 
 /* ─── Constants ──────────────────────────────────────────── */
@@ -57,8 +59,6 @@ const TAG_STYLE: Record<NoteTag,{bg:string;text:string}> = {
   Blockers:   { bg:"rgba(251,113,133,0.22)", text:"#b91c1c" },
   Tomorrow:   { bg:"rgba(52,211,153,0.22)",  text:"#065f46" },
 };
-const DEPARTMENTS = ["Design","Engineering","Marketing","Analytics","Operations","HR","Finance","Product"];
-const ROLES       = ["Design Intern","Software Engineering Intern","Marketing Intern","Data Analytics Intern","Operations Intern","HR Intern","Finance Intern","Product Intern"];
 
 /* ─── Helpers ────────────────────────────────────────────── */
 const fmt12   = (d: Date) => d.toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit", hour12:true });
@@ -86,7 +86,7 @@ const G = {
 function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
   const [step, setStep]       = useState<"welcome"|"register">("welcome");
   const [leaving, setLeaving] = useState(false);
-  const [form, setForm]       = useState({ name:"", role: ROLES[0], department: DEPARTMENTS[0] });
+  const [form, setForm]       = useState({ name:"", role:"", department:"" });
   const [errors, setErrors]   = useState<Record<string,string>>({});
 
   function startLeave(cb: () => void) { setLeaving(true); setTimeout(cb, 650); }
@@ -94,11 +94,13 @@ function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
   function submit() {
     const e: Record<string,string> = {};
     if (!form.name.trim()) e.name = "Full name is required";
+    if (!form.role.trim()) e.role = "Intern role is required";
+    if (!form.department.trim()) e.department = "Department is required";
     if (Object.keys(e).length) { setErrors(e); return; }
     const firstName = form.name.trim().split(" ")[0];
     const user: User = {
       id: uid(), name: form.name.trim(), firstName,
-      role: form.role, department: form.department,
+      role: form.role.trim(), department: form.department.trim(),
       initials: initials(form.name),
       startDate: localDateKey(new Date()),
     };
@@ -189,24 +191,32 @@ function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
               {errors.name && <p className="text-[11px] mt-1" style={{ color:"#fb7185" }}>{errors.name}</p>}
             </div>
 
-            {/* Role */}
+            {/* Intern role */}
             <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color:"rgba(255,255,255,0.4)" }}>Role</label>
-              <select value={form.role} onChange={e => setForm(p => ({...p, role:e.target.value}))}
-                className="w-full px-4 py-3 rounded-2xl text-sm text-white outline-none transition-all appearance-none cursor-pointer"
-                style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}>
-                {ROLES.map(r => <option key={r} value={r} style={{ background:"#1a1a1e", color:"#fff" }}>{r}</option>)}
-              </select>
+              <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color:"rgba(255,255,255,0.4)" }}>Intern Role</label>
+              <input
+                value={form.role}
+                onChange={e => { setForm(p => ({...p, role:e.target.value})); setErrors(p => ({...p, role:""})); }}
+                onKeyDown={e => e.key === "Enter" && submit()}
+                placeholder="e.g. Business Controlling Intern"
+                className="w-full px-4 py-3 rounded-2xl text-sm text-white outline-none transition-all placeholder:text-white/20"
+                style={{ background:"rgba(255,255,255,0.08)", border: errors.role ? "1px solid rgba(251,113,133,0.8)" : "1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}
+              />
+              {errors.role && <p className="text-[11px] mt-1" style={{ color:"#fb7185" }}>{errors.role}</p>}
             </div>
 
             {/* Department */}
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color:"rgba(255,255,255,0.4)" }}>Department</label>
-              <select value={form.department} onChange={e => setForm(p => ({...p, department:e.target.value}))}
-                className="w-full px-4 py-3 rounded-2xl text-sm text-white outline-none transition-all appearance-none cursor-pointer"
-                style={{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}>
-                {DEPARTMENTS.map(d => <option key={d} value={d} style={{ background:"#1a1a1e", color:"#fff" }}>{d}</option>)}
-              </select>
+              <input
+                value={form.department}
+                onChange={e => { setForm(p => ({...p, department:e.target.value})); setErrors(p => ({...p, department:""})); }}
+                onKeyDown={e => e.key === "Enter" && submit()}
+                placeholder="e.g. Finance & Controlling"
+                className="w-full px-4 py-3 rounded-2xl text-sm text-white outline-none transition-all placeholder:text-white/20"
+                style={{ background:"rgba(255,255,255,0.08)", border: errors.department ? "1px solid rgba(251,113,133,0.8)" : "1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}
+              />
+              {errors.department && <p className="text-[11px] mt-1" style={{ color:"#fb7185" }}>{errors.department}</p>}
             </div>
           </div>
 
@@ -658,7 +668,7 @@ function InternTrackApp() {
         {navTab === "attendance" && <AttendanceView user={user} now={now} cloudRevision={cloudRevision} />}
         {navTab === "settings"   && <SettingsView user={user} workHours={workHours} onWorkHoursChange={(h) => { setWorkHours(h); LS.saveWorkHours(user.id, h); }} onUserChange={(u) => { setUser(u); const users = LS.users().map(x => x.id === u.id ? u : x); LS.saveUsers(users); }} onSignOut={() => setScreen("signin")} />}
         {navTab === "reports"    && <ReportsView user={user} activities={activities} attRecords={LS.att(user.id)} />}
-        {navTab === "calendar"   && <CalendarView user={user} now={now} />}
+        {navTab === "calendar"   && <CalendarView user={user} now={now} cloudRevision={cloudRevision} />}
         {navTab === "notes"      && <NotesView user={user} now={now} />}
         {navTab !== "dashboard" && navTab !== "attendance" && navTab !== "settings" && navTab !== "reports" && navTab !== "calendar" && navTab !== "notes" && (
           <div className="flex items-center justify-center h-64">
@@ -1501,10 +1511,11 @@ function fmtH(h:number) {
   return `${h12}${mn > 0 ? `:${String(mn).padStart(2,"0")}` : ""} ${ap}`;
 }
 
-function CalendarView({ user, now }: { user:User; now:Date }) {
+function CalendarView({ user, now, cloudRevision }: { user:User; now:Date; cloudRevision:number }) {
   const todayStr = localDateKey(now);
   const [selDate, setSelDate]   = useState(todayStr);
   const [events, setEvents]     = useState<CalEvent[]>(() => CAL_LS(user.id));
+  const [holidays, setHolidays] = useState<CalendarHoliday[]>(() => LS.holidays());
   const [selEv, setSelEv]       = useState<string|null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState({ title:"", startTime:"09:00", endTime:"10:00", color:EV_COLORS[0] });
@@ -1514,8 +1525,15 @@ function CalendarView({ user, now }: { user:User; now:Date }) {
     void STORE.syncNow().catch(error => console.error("Calendar sync failed.", error));
   }, [events]);
 
+  useEffect(() => {
+    setEvents(CAL_LS(user.id));
+    setHolidays(LS.holidays());
+  }, [user.id, cloudRevision]);
+
   const selDateObj  = new Date(selDate + "T12:00:00");
   const dayEvents   = assignTracks(events.filter(e => e.date === selDate));
+  const dayHoliday  = holidays.find(h => h.date === selDate) ?? null;
+  const isCompanyHoliday = dayHoliday?.type === "company";
   const selEvObj    = selEv ? events.find(e => e.id === selEv) ?? null : null;
   const isToday     = selDate === todayStr;
   const curH        = now.getHours() + now.getMinutes() / 60;
@@ -1561,6 +1579,26 @@ function CalendarView({ user, now }: { user:User; now:Date }) {
           <Plus size={14} /> New Event
         </button>
       </div>
+
+      {dayHoliday && (
+        <div className="flex items-start gap-3 rounded-2xl px-4 py-3"
+          style={{
+            background: isCompanyHoliday ? "rgba(16,185,129,0.16)" : "rgba(167,139,250,0.20)",
+            border: isCompanyHoliday ? "1px solid rgba(16,185,129,0.32)" : "1px solid rgba(167,139,250,0.38)",
+            backdropFilter:"blur(18px)", WebkitBackdropFilter:"blur(18px)"
+          }}>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+            style={{ background:isCompanyHoliday ? "rgba(5,150,105,0.14)" : "rgba(124,58,237,0.16)", color:isCompanyHoliday ? "#047857" : "#7c3aed" }}>
+            <Calendar size={17} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color:isCompanyHoliday ? "#047857" : "#7c3aed" }}>
+              {isCompanyHoliday ? "Company Mass Leave" : "Indonesia National Holiday"}
+            </p>
+            <p className="text-sm font-bold text-[#3d0a20] mt-0.5">{dayHoliday.title}</p>
+          </div>
+        </div>
+      )}
 
       {/* ── Main clock card ── */}
       <div className="rounded-2xl overflow-hidden"
@@ -1744,8 +1782,10 @@ function CalendarView({ user, now }: { user:User; now:Date }) {
           const isSel = ds === selDate;
           const isT   = ds === todayStr;
           const evCnt = events.filter(e => e.date === ds).length;
+          const holiday = holidays.find(h => h.date === ds);
+          const companyHoliday = holiday?.type === "company";
           return (
-            <button key={i} onClick={() => { setSelDate(ds); setSelEv(null); setShowForm(false); }}
+            <button key={i} title={holiday ? holiday.title : undefined} onClick={() => { setSelDate(ds); setSelEv(null); setShowForm(false); }}
               className="flex flex-col items-center gap-1 px-5 py-3 rounded-2xl shrink-0 transition-all hover:scale-[1.03]"
               style={isSel
                 ? { background:"linear-gradient(135deg,#f472b6,#e11d48)", boxShadow:"0 4px 16px rgba(225,29,72,0.38)" }
@@ -1758,9 +1798,11 @@ function CalendarView({ user, now }: { user:User; now:Date }) {
                 {d.getDate()}
               </span>
               <div className="h-3 flex items-center justify-center">
-                {evCnt > 0
-                  ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background:isSel?"rgba(255,255,255,0.28)":"rgba(244,114,182,0.22)", color:isSel?"white":"#be185d" }}>{evCnt}</span>
-                  : isT && !isSel ? <span className="w-1.5 h-1.5 rounded-full" style={{ background:"#e11d48" }} /> : null
+                {holiday
+                  ? <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full" style={{ background:isSel?"rgba(255,255,255,0.28)":companyHoliday?"rgba(16,185,129,0.20)":"rgba(167,139,250,0.24)", color:isSel?"white":companyHoliday?"#047857":"#7c3aed" }}>{companyHoliday ? "KSB" : "LIBUR"}</span>
+                  : evCnt > 0
+                    ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background:isSel?"rgba(255,255,255,0.28)":"rgba(244,114,182,0.22)", color:isSel?"white":"#be185d" }}>{evCnt}</span>
+                    : isT && !isSel ? <span className="w-1.5 h-1.5 rounded-full" style={{ background:"#e11d48" }} /> : null
                 }
               </div>
             </button>
@@ -1784,6 +1826,7 @@ const STATUS_META: Record<AttStatus,{label:string;color:string;bg:string;dot:str
 function AttendanceView({ user, now, cloudRevision }: { user:User; now:Date; cloudRevision:number }) {
   const [viewDate, setViewDate] = useState(new Date(now.getFullYear(), now.getMonth(), 1));
   const [attRecords, setAttRecords] = useState<AttRecord[]>(() => LS.att(user.id));
+  const [holidays, setHolidays] = useState<CalendarHoliday[]>(() => LS.holidays());
   const [showLogForm, setShowLogForm] = useState(false);
   const [logForm, setLogForm] = useState({
     date: (() => { const d = new Date(now); d.setDate(d.getDate()-1); return localDateKey(d); })(),
@@ -1795,6 +1838,7 @@ function AttendanceView({ user, now, cloudRevision }: { user:User; now:Date; clo
 
   useEffect(() => {
     setAttRecords(LS.att(user.id));
+    setHolidays(LS.holidays());
   }, [user.id, cloudRevision]);
 
   function saveRecord() {
@@ -1838,9 +1882,10 @@ function AttendanceView({ user, now, cloudRevision }: { user:User; now:Date; clo
 
   function statusForDate(d: Date): AttStatus {
     if (d > now && d.toDateString() !== now.toDateString()) return "future";
+    const iso = localDateKey(d);
+    if (holidays.some(h => h.date === iso)) return "holiday";
     const dow = d.getDay();
     if (dow === 0 || dow === 6) return "holiday";
-    const iso = localDateKey(d);
     const rec = attRecords.find(r => r.date === iso);
     if (!rec) return d < now ? "absent" : "future";
     if (rec.type) return rec.type;
@@ -1921,8 +1966,9 @@ function AttendanceView({ user, now, cloudRevision }: { user:User; now:Date; clo
             {records.map((r,i) => {
               const isToday = r.date.toDateString() === now.toDateString();
               const m = STATUS_META[r.status];
+              const holiday = holidays.find(h => h.date === localDateKey(r.date));
               return (
-                <div key={i} className="aspect-square flex flex-col items-center justify-center rounded-xl transition-all"
+                <div key={i} title={holiday ? holiday.title : undefined} className="aspect-square flex flex-col items-center justify-center rounded-xl transition-all"
                   style={r.status==="future" ? { background:"rgba(255,255,255,0.08)" } : isToday ? { background:"linear-gradient(135deg,#f472b6,#e11d48)", boxShadow:"0 2px 10px rgba(225,29,72,0.35)" } : { background:m.bg }}>
                   <span className="text-xs font-semibold leading-none" style={{ color: isToday?"#fff":r.status==="future"?"rgba(61,10,32,0.25)":m.color }}>{r.date.getDate()}</span>
                   {r.status !== "future" && !isToday && <span className="w-1 h-1 rounded-full mt-0.5" style={{ background:m.dot }} />}

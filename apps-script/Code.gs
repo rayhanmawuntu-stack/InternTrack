@@ -115,7 +115,7 @@ function doGet(e) {
       payload = {
         ok: true,
         service: 'InternTrack Google Sheets backend',
-        version: 6,
+        version: 7,
         serverTime: new Date().toISOString()
       };
     }
@@ -177,6 +177,17 @@ function syncIndonesiaHolidays() {
       type: 'national',
       country: 'Indonesia',
       source: holiday.source || 'SKB 3 Menteri — Libur Nasional 2026',
+      updatedAt: updatedAt
+    };
+  });
+
+  companySpecificHolidays2026_().forEach(function(holiday) {
+    byDate[holiday.date] = {
+      date: holiday.date,
+      title: holiday.title,
+      type: 'company',
+      country: 'Indonesia',
+      source: holiday.source,
       updatedAt: updatedAt
     };
   });
@@ -259,6 +270,20 @@ function indonesiaNationalHolidays2026_() {
     { date: '2026-08-17', title: 'Hari Kemerdekaan Republik Indonesia', source: source },
     { date: '2026-08-25', title: 'Maulid Nabi Muhammad SAW', source: source },
     { date: '2026-12-25', title: 'Hari Raya Natal', source: source }
+  ];
+}
+
+function companySpecificHolidays2026_() {
+  const source = 'PT KSB Indonesia & PT KSB Sales Indonesia - Company Calendar 2026';
+  return [
+    { date: '2026-03-20', title: 'Idul Fitri 1447 H Leave', source: source },
+    { date: '2026-03-23', title: 'Idul Fitri 1447 H Leave', source: source },
+    { date: '2026-03-24', title: 'Idul Fitri 1447 H Leave', source: source },
+    { date: '2026-03-25', title: 'Idul Fitri 1447 H Leave', source: source },
+    { date: '2026-03-26', title: 'Idul Fitri 1447 H Leave', source: source },
+    { date: '2026-03-27', title: 'Idul Fitri 1447 H Leave', source: source },
+    { date: '2026-05-26', title: 'Idul Adha 1447 H Leave', source: source },
+    { date: '2026-12-24', title: 'Christmas Leave', source: source }
   ];
 }
 
