@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -24,21 +24,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Apply app updates
+      - name: Apply InternTrack UI updates
         run: |
           python scripts/apply_company_calendar.py
           python scripts/even_dashboard_cards.py
           python scripts/monthly_attendance_pdf.py
-
-      - name: Commit upgraded source and backend
-        run: |
-          if ! git diff --quiet -- src/app/App.tsx apps-script/Code.gs package.json; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/app/App.tsx apps-script/Code.gs package.json
-            git commit -m "Add formal monthly attendance PDF export"
-            git push origin HEAD:${GITHUB_REF_NAME}
-          fi
+          python scripts/integrate_report_entry_forms.py
+          python scripts/filter_today_activity.py
+          python scripts/fix_calendar_tab.py
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -56,7 +49,7 @@ jobs:
           ./node_modules/.bin/vite --version
 
       - name: Build static site
-        run: npm run build
+        run: ./node_modules/.bin/vite build
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
