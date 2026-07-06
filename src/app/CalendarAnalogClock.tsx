@@ -118,20 +118,50 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
           style={{ filter:"drop-shadow(0 0 7px rgba(244,114,182,0.48))" }}
         />
       </g>
+
       <g ref={minuteRef} transform={`rotate(${initial.minute} ${cx} ${cy})`}>
-        <line x1={cx} y1={cy + 10} x2={cx} y2={cy - radius * 0.70}
-          stroke="#f9a8d4" strokeWidth={3.1} strokeLinecap="round"
-          style={{ filter:"drop-shadow(0 2px 4px rgba(20,0,12,0.48))" }} />
-      </g>
-      <g ref={secondRef} transform={`rotate(${initial.second} ${cx} ${cy})`}>
-        <line x1={cx} y1={cy + radius * 0.16} x2={cx} y2={cy - radius * 0.84}
-          stroke="#fb7185" strokeWidth={1.25} strokeLinecap="round"
-          style={{ filter:"drop-shadow(0 1px 3px rgba(20,0,12,0.42))" }} />
-        <circle cx={cx} cy={cy - radius * 0.84} r={1.8} fill="#fb7185" />
+        <line
+          x1={cx}
+          y1={cy - radius + 9}
+          x2={cx}
+          y2={cy - radius * 0.20}
+          stroke="#f9a8d4"
+          strokeWidth={3.1}
+          strokeLinecap="round"
+          style={{ filter:"drop-shadow(0 2px 4px rgba(20,0,12,0.48))" }}
+        />
+        <circle
+          cx={cx}
+          cy={cy - radius + 9}
+          r={4.1}
+          fill="#f9a8d4"
+          stroke="#7c163f"
+          strokeWidth={1.8}
+          style={{ filter:"drop-shadow(0 0 6px rgba(249,168,212,0.5))" }}
+        />
       </g>
 
-      <circle cx={cx} cy={cy} r={6.2} fill="#fff7fb" stroke="#e11d48" strokeWidth={2.5} />
-      <circle cx={cx} cy={cy} r={2.2} fill="#e11d48" />
+      <g ref={secondRef} transform={`rotate(${initial.second} ${cx} ${cy})`}>
+        <line
+          x1={cx}
+          y1={cy - radius + 5}
+          x2={cx}
+          y2={cy - radius * 0.05}
+          stroke="#fb7185"
+          strokeWidth={1.25}
+          strokeLinecap="round"
+          style={{ filter:"drop-shadow(0 1px 3px rgba(20,0,12,0.42))" }}
+        />
+        <circle
+          cx={cx}
+          cy={cy - radius + 5}
+          r={2.8}
+          fill="#fb7185"
+          stroke="#7f1d3f"
+          strokeWidth={1.2}
+          style={{ filter:"drop-shadow(0 0 5px rgba(251,113,133,0.55))" }}
+        />
+      </g>
     </g>
   );
 }
