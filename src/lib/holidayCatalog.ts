@@ -37,11 +37,19 @@ const BUNDLED_HOLIDAYS_2026: CalendarHolidayRecord[] = [
 ];
 
 function jakartaDateKey(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Google Sheets can expose a date as its serial number when the column is
+    // formatted inconsistently. Serial 1 is 1899-12-31, with the 1900 leap-year
+    // compatibility offset used by Sheets/Excel.
+    const utc = Date.UTC(1899, 11, 30) + Math.round(value) * 86400000;
+    value = new Date(utc);
+  }
+
   const text = String(value ?? "").trim();
   if (!text) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
 
-  const parsed = new Date(text);
+  const parsed = value instanceof Date ? value : new Date(text);
   if (Number.isNaN(parsed.getTime())) return null;
 
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -50,11 +58,22 @@ function jakartaDateKey(value: unknown): string | null {
     month:"2-digit",
     day:"2-digit",
   }).formatToParts(parsed);
-  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? "";
-  const year = get("year");
-  const month = get("month");
-  const day = get("day");
+  const read = (type: "year" | "month" | "day") => parts.find(part => part.type === type)?.value ?? "";
+  const year = read("year");
+  const month = read("month");
+  const day = read("day");
   return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+function inferHolidayType(entry: Record<string, unknown>): CalendarHolidayRecord["type"] {
+  const raw = String(entry.type ?? entry.kind ?? entry.category ?? entry.holidayType ?? "").trim().toLowerCase();
+  const context = [raw, entry.title, entry.source, entry.country]
+    .map(value => String(value ?? "").toLowerCase())
+    .join(" ");
+
+  if (/company|ksb|mass leave|company leave|office leave/.test(context)) return "company";
+  if (/collective|cuti bersama/.test(context)) return "collective";
+  return "national";
 }
 
 function holidayPriority(type: CalendarHolidayRecord["type"]): number {
@@ -69,19 +88,15 @@ export function mergeCalendarHolidays(remoteValue: unknown): CalendarHolidayReco
 
   remote.forEach(entry => {
     if (!entry || typeof entry !== "object") return;
-    const candidate = entry as Partial<CalendarHolidayRecord> & { date?: unknown };
-    const date = jakartaDateKey(candidate.date);
-    const title = String(candidate.title ?? "").trim();
+    const candidate = entry as Record<string, unknown>;
+    const date = jakartaDateKey(candidate.date ?? candidate.startDate ?? candidate.holidayDate);
+    const title = String(candidate.title ?? candidate.name ?? candidate.description ?? "").trim();
     if (!date || !title) return;
 
-    const rawType = String(candidate.type ?? "national");
-    const type: CalendarHolidayRecord["type"] = rawType === "company" || rawType === "collective"
-      ? rawType
-      : "national";
     const next: CalendarHolidayRecord = {
       date,
       title,
-      type,
+      type:inferHolidayType(candidate),
       source:String(candidate.source ?? "").trim() || undefined,
     };
 
