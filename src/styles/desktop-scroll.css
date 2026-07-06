@@ -1,0 +1,39 @@
+/* Desktop/laptop scrolling improvements. Mobile keeps its native behavior. */
+@media (min-width: 768px) and (pointer: fine) {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  .it-main,
+  .it-app-shell aside,
+  .it-calendar-sheet,
+  .it-main [class*="overflow-y-auto"],
+  .it-main [class*="overflow-auto"] {
+    scroll-behavior: smooth;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .it-main {
+    scroll-padding-top: 16px;
+    scroll-padding-bottom: 24px;
+  }
+
+  .it-app-shell aside,
+  .it-calendar-sheet {
+    scroll-padding-top: 12px;
+    scroll-padding-bottom: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  .it-main,
+  .it-app-shell aside,
+  .it-calendar-sheet,
+  .it-main [class*="overflow-y-auto"],
+  .it-main [class*="overflow-auto"] {
+    scroll-behavior: auto !important;
+  }
+}
