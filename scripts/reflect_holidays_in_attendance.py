@@ -110,8 +110,8 @@ replace_once(
                       ? { background:"linear-gradient(135deg,#f472b6,#e11d48)", boxShadow:"0 2px 10px rgba(225,29,72,0.35)" }
                       : { background:m.bg };
               return (
-                <div key={i} title={holiday ? `${m.label}: ${holiday.title}` : m.label} className="aspect-square min-h-10 flex flex-col items-center justify-center rounded-xl transition-all"
-                  style={cellStyle}>
+                <div key={i} title={holiday ? `${m.label}: ${holiday.title}` : m.label} className="it-attendance-day aspect-square min-h-10 flex flex-col items-center justify-center rounded-xl transition-all"
+                  style={{ ...cellStyle, animationDelay:`${Math.min(i, 20) * 16}ms` }}>
                   <span className="text-xs font-semibold leading-none" style={{ color:isToday&&!holidayBadge?"#fff":r.status==="future"?"rgba(61,10,32,0.25)":m.color }}>{r.date.getDate()}</span>
                   {holidayBadge
                     ? <span className="mt-1 rounded-full px-1 py-0.5 text-[7px] font-black leading-none" style={{ background:isCompanyHoliday?"rgba(4,120,87,0.14)":"rgba(124,58,237,0.14)", color:m.color }}>{holidayBadge}</span>
