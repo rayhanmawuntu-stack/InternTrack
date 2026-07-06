@@ -33,6 +33,7 @@ jobs:
           python scripts/filter_today_activity.py
           python scripts/fix_calendar_tab.py
           python scripts/pulse_shift_progress.py
+          python scripts/fix_calendar_analog_clock.py
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
