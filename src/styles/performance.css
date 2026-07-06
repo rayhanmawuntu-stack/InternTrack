@@ -33,6 +33,20 @@
     backdrop-filter: blur(14px) !important;
     -webkit-backdrop-filter: blur(14px) !important;
   }
+
+  .it-shift-progress-fill,
+  .it-shift-progress-sweep,
+  .it-shift-progress-beacon {
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+
+  .it-shift-progress-track {
+    min-height: 12px;
+    overflow: visible !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -42,5 +56,18 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* Keep the live shift indicator visible with a low-motion opacity pulse. */
+  .it-shift-progress-fill {
+    animation: shiftLightPulse 2.4s ease-in-out infinite !important;
+  }
+
+  .it-shift-progress-sweep {
+    display: none !important;
+  }
+
+  .it-shift-progress-beacon {
+    animation: shiftLightBeacon 2.4s ease-in-out infinite !important;
   }
 }
