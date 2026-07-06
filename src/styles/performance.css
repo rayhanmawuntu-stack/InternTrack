@@ -21,6 +21,22 @@
   isolation: isolate;
 }
 
+.it-shift-progress-track {
+  overflow: visible !important;
+}
+
+.it-shift-progress-glow,
+.it-shift-progress-fill,
+.it-shift-progress-sweep,
+.it-shift-progress-beacon {
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+.it-shift-progress-glow.is-active {
+  visibility: visible;
+}
+
 @media (max-width: 767px) {
   .it-month-calendar-card {
     contain-intrinsic-size: 500px;
@@ -34,18 +50,23 @@
     -webkit-backdrop-filter: blur(14px) !important;
   }
 
+  .it-shift-progress-glow,
   .it-shift-progress-fill,
   .it-shift-progress-sweep,
   .it-shift-progress-beacon {
     -webkit-transform: translateZ(0);
     transform: translateZ(0);
-    -webkit-backface-visibility: hidden;
-    backface-visibility: hidden;
   }
 
   .it-shift-progress-track {
     min-height: 12px;
-    overflow: visible !important;
+  }
+
+  .it-shift-progress-glow.is-active {
+    box-shadow:
+      0 0 8px rgba(249,168,212,0.92),
+      0 0 18px rgba(244,114,182,0.72),
+      0 0 30px rgba(225,29,72,0.48) !important;
   }
 }
 
@@ -58,9 +79,13 @@
     transition-duration: 0.01ms !important;
   }
 
-  /* Keep the live shift indicator visible with a low-motion opacity pulse. */
+  /* Keep the live indicator glowing with a slower low-motion pulse. */
+  .it-shift-progress-glow.is-active {
+    animation: shiftGlowPulse 2.8s ease-in-out infinite !important;
+  }
+
   .it-shift-progress-fill {
-    animation: shiftLightPulse 2.4s ease-in-out infinite !important;
+    animation: shiftLightPulse 2.8s ease-in-out infinite !important;
   }
 
   .it-shift-progress-sweep {
@@ -68,6 +93,6 @@
   }
 
   .it-shift-progress-beacon {
-    animation: shiftLightBeacon 2.4s ease-in-out infinite !important;
+    animation: shiftLightBeacon 2.8s ease-in-out infinite !important;
   }
 }
