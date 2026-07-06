@@ -26,6 +26,7 @@ jobs:
       - name: Apply InternTrack UI updates
         run: |
           python scripts/apply_company_calendar.py
+          python scripts/normalize_public_holidays.py
           python scripts/even_dashboard_cards.py
           python scripts/monthly_attendance_pdf.py
           python scripts/integrate_report_entry_forms.py
