@@ -33,6 +33,7 @@ jobs:
           python scripts/fix_calendar_tab.py
           python scripts/pulse_shift_progress.py
           python scripts/fix_calendar_analog_clock.py
+          python scripts/redesign_calendar_glass.py
           python scripts/replace_boot_spinner.py
 
       - name: Set up Node.js
