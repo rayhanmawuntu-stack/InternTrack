@@ -18,6 +18,7 @@ function handAngleValues(date: Date) {
 }
 
 export default function CalendarAnalogClock({ cx, cy, radius = 63 }: Props) {
+  const rootRef = useRef<SVGGElement>(null);
   const hourRef = useRef<SVGGElement>(null);
   const minuteRef = useRef<SVGGElement>(null);
   const secondRef = useRef<SVGGElement>(null);
@@ -39,21 +40,50 @@ export default function CalendarAnalogClock({ cx, cy, radius = 63 }: Props) {
 
   useEffect(() => {
     let frame = 0;
+    let visible = true;
+    let lastFrame = 0;
+    const frameInterval = 1000 / 30;
 
-    const update = () => {
+    const applyTime = (time: number) => {
+      if (!visible || document.visibilityState !== "visible") return;
+      if (time - lastFrame < frameInterval) {
+        frame = requestAnimationFrame(applyTime);
+        return;
+      }
+
+      lastFrame = time;
       const angles = handAngleValues(new Date());
       hourRef.current?.setAttribute("transform", `rotate(${angles.hour} ${cx} ${cy})`);
       minuteRef.current?.setAttribute("transform", `rotate(${angles.minute} ${cx} ${cy})`);
       secondRef.current?.setAttribute("transform", `rotate(${angles.second} ${cx} ${cy})`);
-      frame = requestAnimationFrame(update);
+      frame = requestAnimationFrame(applyTime);
     };
 
-    frame = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(frame);
+    const start = () => {
+      cancelAnimationFrame(frame);
+      if (visible && document.visibilityState === "visible") {
+        frame = requestAnimationFrame(applyTime);
+      }
+    };
+
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = entry?.isIntersecting ?? true;
+      start();
+    }, { rootMargin:"80px" });
+
+    if (rootRef.current) observer.observe(rootRef.current);
+    document.addEventListener("visibilitychange", start);
+    start();
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", start);
+    };
   }, [cx, cy]);
 
   return (
-    <g aria-label="Live analog clock">
+    <g ref={rootRef} aria-label="Live analog clock">
       <defs>
         <radialGradient id="calendarAnalogFace" cx="38%" cy="30%" r="80%">
           <stop offset="0%" stopColor="rgba(255,255,255,0.30)" />
