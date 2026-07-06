@@ -98,9 +98,25 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
       ))}
 
       <g ref={hourRef} transform={`rotate(${initial.hour} ${cx} ${cy})`}>
-        <line x1={cx} y1={cy + 8} x2={cx} y2={cy - radius * 0.47}
-          stroke="rgba(255,255,255,0.96)" strokeWidth={5.2} strokeLinecap="round"
-          style={{ filter:"drop-shadow(0 2px 4px rgba(20,0,12,0.48))" }} />
+        <line
+          x1={cx}
+          y1={cy - radius + 7}
+          x2={cx}
+          y2={cy - radius * 0.48}
+          stroke="rgba(255,255,255,0.96)"
+          strokeWidth={5.2}
+          strokeLinecap="round"
+          style={{ filter:"drop-shadow(0 2px 4px rgba(20,0,12,0.48))" }}
+        />
+        <circle
+          cx={cx}
+          cy={cy - radius + 7}
+          r={5.2}
+          fill="#fff7fb"
+          stroke="#e11d48"
+          strokeWidth={2.2}
+          style={{ filter:"drop-shadow(0 0 7px rgba(244,114,182,0.48))" }}
+        />
       </g>
       <g ref={minuteRef} transform={`rotate(${initial.minute} ${cx} ${cy})`}>
         <line x1={cx} y1={cy + 10} x2={cx} y2={cy - radius * 0.70}
