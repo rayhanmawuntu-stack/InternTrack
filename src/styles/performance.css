@@ -79,7 +79,6 @@
     transition-duration: 0.01ms !important;
   }
 
-  /* Keep the live indicator glowing with a slower low-motion pulse. */
   .it-shift-progress-glow.is-active {
     animation: shiftGlowPulse 2.8s ease-in-out infinite !important;
   }
@@ -94,5 +93,217 @@
 
   .it-shift-progress-beacon {
     animation: shiftLightBeacon 2.8s ease-in-out infinite !important;
+  }
+}
+
+/* Refined, lightweight motion for InternTrack. */
+:root {
+  --it-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --it-motion-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes itViewEnter {
+  from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.995); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes itCardEnter {
+  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(0.975); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes itDayEnter {
+  from { opacity: 0; transform: translate3d(0, 5px, 0) scale(0.9); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes itBadgePop {
+  0% { opacity: 0; transform: scale(0.65); }
+  72% { opacity: 1; transform: scale(1.1); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .it-main > div:first-child {
+    animation: itViewEnter 380ms var(--it-motion-ease) both;
+  }
+
+  .it-main > .space-y-5,
+  .it-main > .it-calendar-shell,
+  .it-main > .it-calendar-section,
+  .it-main > .it-stat-grid,
+  .it-main > .it-clock-grid,
+  .it-main > .it-dashboard-lower {
+    animation: itViewEnter 440ms var(--it-motion-ease) both;
+  }
+
+  .it-stat-grid > *,
+  .it-clock-grid > *,
+  .it-dashboard-lower > * {
+    animation: itCardEnter 480ms var(--it-motion-ease) both;
+  }
+
+  .it-stat-grid > *:nth-child(1) { animation-delay: 20ms; }
+  .it-stat-grid > *:nth-child(2) { animation-delay: 65ms; }
+  .it-stat-grid > *:nth-child(3) { animation-delay: 110ms; }
+  .it-stat-grid > *:nth-child(4) { animation-delay: 155ms; }
+  .it-clock-grid > *:nth-child(1) { animation-delay: 90ms; }
+  .it-clock-grid > *:nth-child(2) { animation-delay: 145ms; }
+
+  .it-attendance-day {
+    animation: itDayEnter 340ms var(--it-motion-spring) both;
+  }
+
+  .it-attendance-day span.rounded-full {
+    animation: itBadgePop 420ms var(--it-motion-spring) 180ms both;
+  }
+}
+
+.it-stat-grid > *,
+.it-clock-card,
+.it-dashboard-lower > *,
+.it-month-calendar-card,
+.it-attendance-day {
+  transition:
+    transform 220ms var(--it-motion-ease),
+    box-shadow 220ms ease,
+    border-color 220ms ease,
+    background-color 220ms ease;
+  transform-origin: center;
+}
+
+.it-clock-card,
+.it-stat-grid > *,
+.it-dashboard-lower > *,
+.it-month-calendar-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.it-clock-card::after,
+.it-stat-grid > *::after,
+.it-dashboard-lower > *::after,
+.it-month-calendar-card::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: -45% auto -45% -38%;
+  width: 32%;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(-150%, 0, 0) rotate(12deg);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  transition: transform 720ms var(--it-motion-ease), opacity 180ms ease;
+}
+
+.it-clock-card > *,
+.it-stat-grid > * > *,
+.it-dashboard-lower > * > *,
+.it-month-calendar-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.it-main button,
+.it-mobile-nav button,
+.it-app-shell aside button {
+  transform-origin: center;
+  transition-property: transform, background-color, color, box-shadow, opacity !important;
+  transition-timing-function: var(--it-motion-ease) !important;
+}
+
+.it-main button:active,
+.it-mobile-nav button:active,
+.it-app-shell aside button:active {
+  transform: scale(0.965);
+}
+
+.it-mobile-nav button svg,
+.it-app-shell aside button svg {
+  transition: transform 190ms var(--it-motion-spring);
+  transform-origin: center;
+}
+
+.it-main input,
+.it-main textarea,
+.it-main select {
+  transition: transform 190ms var(--it-motion-ease), box-shadow 190ms ease, border-color 190ms ease, background-color 190ms ease;
+}
+
+.it-main input:focus,
+.it-main textarea:focus,
+.it-main select:focus {
+  transform: translate3d(0, -1px, 0);
+  border-color: rgba(244,114,182,0.58) !important;
+  box-shadow: 0 0 0 3px rgba(244,114,182,0.12), 0 6px 18px rgba(190,24,93,0.08);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .it-stat-grid > *:hover,
+  .it-clock-card:hover,
+  .it-dashboard-lower > *:hover,
+  .it-month-calendar-card:hover {
+    transform: translate3d(0, -3px, 0);
+    box-shadow: 0 12px 30px rgba(96,18,54,0.14), inset 0 1px 0 rgba(255,255,255,0.64) !important;
+  }
+
+  .it-clock-card:hover::after,
+  .it-stat-grid > *:hover::after,
+  .it-dashboard-lower > *:hover::after,
+  .it-month-calendar-card:hover::after {
+    opacity: 1;
+    transform: translate3d(520%, 0, 0) rotate(12deg);
+  }
+
+  .it-attendance-day:hover {
+    transform: translate3d(0, -2px, 0) scale(1.035);
+    box-shadow: 0 8px 18px rgba(86,16,48,0.14) !important;
+  }
+
+  .it-main button:hover,
+  .it-mobile-nav button:hover,
+  .it-app-shell aside button:hover {
+    transform: translate3d(0, -1px, 0);
+  }
+
+  .it-mobile-nav button:hover svg,
+  .it-app-shell aside button:hover svg {
+    transform: translate3d(0, -1px, 0) scale(1.08);
+  }
+}
+
+@media (max-width: 767px) {
+  .it-stat-grid > *,
+  .it-clock-card,
+  .it-dashboard-lower > *,
+  .it-month-calendar-card,
+  .it-attendance-day {
+    transition-duration: 170ms;
+  }
+
+  .it-main button:active,
+  .it-mobile-nav button:active {
+    transform: scale(0.95);
+  }
+
+  .it-mobile-nav button:active svg {
+    transform: scale(0.86);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .it-main > *,
+  .it-stat-grid > *,
+  .it-clock-grid > *,
+  .it-dashboard-lower > *,
+  .it-attendance-day {
+    animation: none !important;
+  }
+
+  .it-clock-card::after,
+  .it-stat-grid > *::after,
+  .it-dashboard-lower > *::after,
+  .it-month-calendar-card::after {
+    display: none;
   }
 }
