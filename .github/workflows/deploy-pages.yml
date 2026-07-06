@@ -41,6 +41,7 @@ jobs:
           python scripts/install_month_calendar_below_dial.py
           python scripts/remove_month_calendar_helper_text.py
           python scripts/enable_desktop_scroll_smoothing.py
+          python scripts/optimize_runtime_performance.py
           python scripts/replace_boot_spinner.py
 
       - name: Set up Node.js
