@@ -3,8 +3,8 @@ from pathlib import Path
 path = Path("src/app/App.tsx")
 source = path.read_text(encoding="utf-8")
 
-if "mobileShiftPulseV2" in source:
-    print("Mobile-safe pulsing shift progress is already applied.")
+if "shiftGlowV3" in source:
+    print("Cross-device shift glow is already applied.")
     raise SystemExit(0)
 
 old_keyframes = '''            @keyframes pulseGlow {
@@ -17,15 +17,25 @@ old_keyframes = '''            @keyframes pulseGlow {
               100% { background-position:  200% 0; }
             }'''
 
-new_keyframes = '''            /* mobileShiftPulseV2: transform/opacity animation stays on the compositor. */
+new_keyframes = '''            /* shiftGlowV3: dedicated halo plus compositor-friendly motion. */
+            @keyframes shiftGlowPulse {
+              0%, 100% {
+                opacity: 0.48;
+                transform: translate3d(0,-50%,0) scaleY(0.82);
+              }
+              50% {
+                opacity: 0.95;
+                transform: translate3d(0,-50%,0) scaleY(1.38);
+              }
+            }
             @keyframes shiftLightPulse {
               0%, 100% {
-                opacity: 0.78;
-                transform: scaleY(0.82);
+                opacity: 0.86;
+                transform: scaleY(0.92);
               }
               50% {
                 opacity: 1;
-                transform: scaleY(1.28);
+                transform: scaleY(1.12);
               }
             }
             @keyframes shiftLightSweep {
@@ -36,11 +46,11 @@ new_keyframes = '''            /* mobileShiftPulseV2: transform/opacity animatio
             }
             @keyframes shiftLightBeacon {
               0%, 100% {
-                transform: translate3d(-50%,-50%,0) scale(0.82);
-                opacity: 0.72;
+                transform: translate3d(-50%,-50%,0) scale(0.84);
+                opacity: 0.76;
               }
               50% {
-                transform: translate3d(-50%,-50%,0) scale(1.42);
+                transform: translate3d(-50%,-50%,0) scale(1.46);
                 opacity: 1;
               }
             }'''
@@ -78,11 +88,36 @@ new_bar = '''                <div className="it-shift-progress-track h-3 rounded
                   boxShadow:"inset 0 1px 3px rgba(61,10,32,0.10)",
                   isolation:"isolate",
                 }}>
+                  <div
+                    className={`it-shift-progress-glow ${clockedIn ? "is-active" : ""}`}
+                    style={{
+                      position:"absolute",
+                      zIndex:0,
+                      top:"50%",
+                      left:0,
+                      width:`${shiftProg}%`,
+                      minWidth: clockedIn && shiftProg > 0 ? 12 : 0,
+                      height:18,
+                      borderRadius:"999px",
+                      background:"linear-gradient(90deg,rgba(251,207,232,0.86),rgba(244,114,182,0.92),rgba(225,29,72,0.88))",
+                      boxShadow:"0 0 9px rgba(249,168,212,0.95), 0 0 20px rgba(244,114,182,0.78), 0 0 38px rgba(225,29,72,0.52)",
+                      opacity: clockedIn && shiftProg > 0 ? 0.72 : 0,
+                      transform:"translate3d(0,-50%,0)",
+                      transformOrigin:"center",
+                      animation: clockedIn && shiftProg > 0 ? "shiftGlowPulse 1.45s ease-in-out infinite" : "none",
+                      willChange: clockedIn ? "transform, opacity" : "auto",
+                      pointerEvents:"none",
+                    }}
+                  />
                   <div className="it-shift-progress-fill h-full rounded-full transition-[width] duration-700 relative overflow-hidden"
                     style={{
+                      zIndex:1,
                       width:`${shiftProg}%`,
                       minWidth: clockedIn && shiftProg > 0 ? 10 : 0,
                       background:"linear-gradient(90deg,#fbcfe8 0%,#f472b6 48%,#e11d48 100%)",
+                      boxShadow: clockedIn && shiftProg > 0
+                        ? "0 0 5px rgba(255,255,255,0.82), 0 0 11px rgba(249,168,212,0.88), 0 0 18px rgba(225,29,72,0.58)"
+                        : "none",
                       opacity: clockedIn ? 1 : 0.32,
                       transformOrigin:"center",
                       animation: clockedIn ? "shiftLightPulse 1.45s ease-in-out infinite" : "none",
@@ -111,12 +146,12 @@ new_bar = '''                <div className="it-shift-progress-track h-3 rounded
                       zIndex:2,
                       top:"50%",
                       left:`${Math.max(1.5, shiftProg)}%`,
-                      width:10,
-                      height:10,
+                      width:11,
+                      height:11,
                       borderRadius:"50%",
                       background:"#fff7fb",
                       border:"2px solid #e11d48",
-                      boxShadow:"0 0 7px rgba(249,168,212,0.95), 0 0 14px rgba(225,29,72,0.65)",
+                      boxShadow:"0 0 8px rgba(255,255,255,0.95), 0 0 16px rgba(249,168,212,0.98), 0 0 28px rgba(225,29,72,0.75)",
                       animation:"shiftLightBeacon 1.45s ease-in-out infinite",
                       willChange:"transform, opacity",
                       pointerEvents:"none",
@@ -129,4 +164,4 @@ if old_bar not in source:
 source = source.replace(old_bar, new_bar, 1)
 
 path.write_text(source, encoding="utf-8")
-print("Applied mobile-safe pulsing shift progress animation.")
+print("Applied cross-device glow and pulse to the shift progress bar.")
