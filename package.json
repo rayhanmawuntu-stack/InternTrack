@@ -4,8 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "python scripts/integrate_report_entry_forms.py && python scripts/filter_today_activity.py && vite",
-    "build": "python scripts/integrate_report_entry_forms.py && python scripts/filter_today_activity.py && vite build",
+    "prepare-ui": "python scripts/apply_company_calendar.py && python scripts/even_dashboard_cards.py && python scripts/monthly_attendance_pdf.py && python scripts/integrate_report_entry_forms.py && python scripts/filter_today_activity.py && python scripts/fix_calendar_tab.py && python scripts/pulse_shift_progress.py && python scripts/fix_calendar_analog_clock.py && python scripts/redesign_calendar_glass.py && python scripts/apply_boot_screen_theme.py && python scripts/optimize_calendar_fullscreen.py && python scripts/replace_boot_spinner.py",
+    "dev": "npm run prepare-ui && vite",
+    "build": "npm run prepare-ui && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
