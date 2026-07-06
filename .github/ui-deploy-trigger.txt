@@ -1,2 +1,2 @@
-Deploy the latest InternTrack UI updates from main.
-Includes the outer-ring Calendar clock, four clock numerals, Calendar month view, persistent navigation, and safe performance improvements.
+Deploy the latest InternTrack performance changes from main.
+This rebuild includes smoother scrolling, lighter rendering, safer clock updates, and the latest calendar sync fixes.
