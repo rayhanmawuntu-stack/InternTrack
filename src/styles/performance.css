@@ -1,0 +1,46 @@
+/* Lightweight rendering hints for large, scrollable InternTrack surfaces. */
+.it-month-calendar-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 680px;
+  contain: layout paint style;
+}
+
+.it-calendar-sheet,
+.it-main [class*="overflow-y-auto"],
+.it-main [class*="overflow-auto"] {
+  overscroll-behavior: contain;
+}
+
+.it-main button,
+.it-mobile-nav button,
+.it-app-shell aside button {
+  transition-duration: 150ms !important;
+}
+
+.it-app-shell {
+  isolation: isolate;
+}
+
+@media (max-width: 767px) {
+  .it-month-calendar-card {
+    contain-intrinsic-size: 500px;
+  }
+
+  .it-calendar-shell,
+  .it-month-calendar-toolbar,
+  .it-month-calendar-summary,
+  .it-month-calendar-card {
+    backdrop-filter: blur(14px) !important;
+    -webkit-backdrop-filter: blur(14px) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .it-main *,
+  .it-mobile-nav *,
+  .it-app-shell aside * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
