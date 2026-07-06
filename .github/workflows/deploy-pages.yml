@@ -35,6 +35,7 @@ jobs:
           python scripts/fix_calendar_analog_clock.py
           python scripts/redesign_calendar_glass.py
           python scripts/apply_boot_screen_theme.py
+          python scripts/optimize_calendar_fullscreen.py
           python scripts/replace_boot_spinner.py
 
       - name: Set up Node.js
