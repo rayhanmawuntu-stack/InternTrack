@@ -12,13 +12,12 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -63,5 +62,19 @@ jobs:
           path: ./dist
 
       - name: Deploy to GitHub Pages
-        id: deployment
+        id: deployment_first
+        continue-on-error: true
         uses: actions/deploy-pages@v4
+
+      - name: Wait before retrying Pages deployment
+        if: steps.deployment_first.outcome == 'failure'
+        run: sleep 30
+
+      - name: Retry GitHub Pages deployment
+        id: deployment_retry
+        if: steps.deployment_first.outcome == 'failure'
+        uses: actions/deploy-pages@v4
+
+      - name: Confirm first deployment succeeded
+        if: steps.deployment_first.outcome == 'success'
+        run: echo "GitHub Pages deployment completed successfully."
