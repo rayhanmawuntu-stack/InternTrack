@@ -7,9 +7,30 @@ if 'runtimePerformanceV1' in text:
     print('Runtime performance optimizations are already applied.')
     raise SystemExit(0)
 
-# Keep the initial bundle lean: PDF code is only needed after the user clicks Export.
+# Add React's lazy-loading primitives.
+text = text.replace(
+    'import { useState, useEffect, useRef } from "react";',
+    'import { useState, useEffect, useRef, lazy, Suspense } from "react";',
+    1,
+)
+
+# Keep the initial bundle lean: reports charts and PDF code load only when used.
 text = text.replace('import { jsPDF } from "jspdf";\n', '', 1)
 text = text.replace('import autoTable from "jspdf-autotable";\n', '', 1)
+text = text.replace('''import {
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid, Cell,
+} from "recharts";
+''', '', 1)
+
+types_marker = '/* ─── Types ─────────────────────────────────────────────── */'
+if types_marker not in text:
+    raise RuntimeError('Could not locate the App type section.')
+text = text.replace(
+    types_marker,
+    'const DailyHoursChart = lazy(() => import("./DailyHoursChart"));\n\n' + types_marker,
+    1,
+)
 
 old_ticker = '''  // Clock ticker
   useEffect(() => {
@@ -85,6 +106,23 @@ text = text.replace(old_document, new_document, 1)
 text = text.replace('(document as jsPDF & { lastAutoTable?: { finalY:number } })',
                     '(document as any)', 1)
 
+# Defer Recharts until the Reports tab is actually opened.
+chart_start = text.find('                <ResponsiveContainer width="100%" height={200}>')
+chart_end_marker = '                </ResponsiveContainer>'
+chart_end = text.find(chart_end_marker, chart_start)
+if chart_start < 0 or chart_end < 0:
+    raise RuntimeError('Could not locate the Reports daily-hours chart.')
+chart_end += len(chart_end_marker)
+chart_replacement = '''                <Suspense fallback={
+                  <div className="h-[200px] rounded-xl flex items-center justify-center text-xs text-pink-300"
+                    style={{ background:"rgba(255,255,255,0.05)" }}>
+                    Loading chart…
+                  </div>
+                }>
+                  <DailyHoursChart data={dailyData} />
+                </Suspense>'''
+text = text[:chart_start] + chart_replacement + text[chart_end:]
+
 # Shorten the app-entry transition and remove the expensive full-screen blur.
 old_animation = '''        @keyframes dashEnter {
           from { opacity: 0; transform: scale(0.96); filter: blur(10px); }
@@ -100,4 +138,4 @@ text = text.replace('animation:"dashEnter 0.7s cubic-bezier(0.22,1,0.36,1) both"
                     'animation:"dashEnter 0.28s cubic-bezier(0.22,1,0.36,1) both"', 1)
 
 path.write_text(text, encoding='utf-8')
-print('Applied minute-aligned rendering, lazy PDF loading, and faster entry transitions.')
+print('Applied minute-aligned rendering, lazy reports/PDF loading, and faster transitions.')
