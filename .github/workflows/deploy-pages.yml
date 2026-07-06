@@ -38,6 +38,7 @@ jobs:
           python scripts/optimize_calendar_fullscreen.py
           python scripts/fix_calendar_mobile_fullscreen.py
           python scripts/install_month_calendar_below_dial.py
+          python scripts/remove_month_calendar_helper_text.py
           python scripts/enable_desktop_scroll_smoothing.py
           python scripts/replace_boot_spinner.py
 
