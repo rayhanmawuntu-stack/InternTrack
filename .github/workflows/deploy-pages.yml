@@ -46,6 +46,8 @@ jobs:
           python scripts/enable_desktop_scroll_smoothing.py
           python scripts/optimize_runtime_performance.py || echo "::warning::Performance optimization skipped; continuing deployment."
           python scripts/replace_boot_spinner.py
+          python scripts/sync_user_color_scheme.py
+          python scripts/theme_remaining_components.py
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
