@@ -39,31 +39,32 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
 
   useEffect(() => {
     let frame = 0;
+    let timer = 0;
     let visible = true;
-    let lastFrame = 0;
-    const frameInterval = 1000 / 30;
 
-    const applyTime = (time: number) => {
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
       if (!visible || document.visibilityState !== "visible") return;
-      if (time - lastFrame < frameInterval) {
-        frame = requestAnimationFrame(applyTime);
-        return;
-      }
 
-      lastFrame = time;
+      const lowSpec = document.documentElement.classList.contains("it-low-spec");
+      const delay = lowSpec ? 1000 / 12 : 1000 / 30;
+      timer = window.setTimeout(() => {
+        frame = requestAnimationFrame(applyTime);
+      }, delay);
+    };
+
+    const applyTime = () => {
+      if (!visible || document.visibilityState !== "visible") return;
+
       const angles = handAngleValues(new Date());
       hourRef.current?.setAttribute("transform", `rotate(${angles.hour} ${cx} ${cy})`);
       minuteRef.current?.setAttribute("transform", `rotate(${angles.minute} ${cx} ${cy})`);
       secondRef.current?.setAttribute("transform", `rotate(${angles.second} ${cx} ${cy})`);
-      frame = requestAnimationFrame(applyTime);
+      schedule();
     };
 
-    const start = () => {
-      cancelAnimationFrame(frame);
-      if (visible && document.visibilityState === "visible") {
-        frame = requestAnimationFrame(applyTime);
-      }
-    };
+    const start = () => schedule();
 
     const observer = new IntersectionObserver(([entry]) => {
       visible = entry?.isIntersecting ?? true;
@@ -76,6 +77,7 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
 
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
       observer.disconnect();
       document.removeEventListener("visibilitychange", start);
     };
