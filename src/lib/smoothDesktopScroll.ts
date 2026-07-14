@@ -4,6 +4,11 @@ type ScrollState = {
   frame: number;
 };
 
+type PerformanceNavigator = Navigator & {
+  deviceMemory?: number;
+  connection?: { saveData?: boolean; effectiveType?: string };
+};
+
 const SCROLLABLE_SELECTOR = [
   ".it-main",
   ".it-app-shell aside",
@@ -11,10 +16,34 @@ const SCROLLABLE_SELECTOR = [
   '[data-smooth-scroll="true"]',
 ].join(",");
 
+function shouldUseNativeScrolling(): boolean {
+  const nav = navigator as PerformanceNavigator;
+  const memory = nav.deviceMemory ?? 8;
+  const cores = nav.hardwareConcurrency || 8;
+  const connection = nav.connection;
+  const effectiveType = connection?.effectiveType || "";
+  const forcedMode = window.localStorage.getItem("it_performance_mode");
+
+  if (forcedMode === "standard") return false;
+  if (forcedMode === "low") return true;
+
+  return document.documentElement.classList.contains("it-low-spec")
+    || memory <= 4
+    || cores <= 4
+    || Boolean(connection?.saveData)
+    || effectiveType === "slow-2g"
+    || effectiveType === "2g";
+}
+
 export function installDesktopScrollSmoothing(): () => void {
   const desktop = window.matchMedia("(min-width: 768px) and (pointer: fine)");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-  if (!desktop.matches || reducedMotion.matches) return () => undefined;
+
+  // Native scrolling avoids a continuous requestAnimationFrame loop and is
+  // substantially cheaper on limited CPUs and integrated graphics.
+  if (!desktop.matches || reducedMotion.matches || shouldUseNativeScrolling()) {
+    return () => undefined;
+  }
 
   const states = new WeakMap<HTMLElement, ScrollState>();
 
