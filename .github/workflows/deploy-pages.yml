@@ -30,6 +30,7 @@ jobs:
           python scripts/reflect_holidays_in_attendance.py
           python scripts/even_dashboard_cards.py
           python scripts/monthly_attendance_pdf.py
+          python scripts/add_attendance_remarks.py
           python scripts/integrate_report_entry_forms.py
           python scripts/filter_today_activity.py
           python scripts/fix_calendar_tab.py
