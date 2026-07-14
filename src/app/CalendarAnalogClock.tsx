@@ -48,7 +48,9 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
       if (!visible || document.visibilityState !== "visible") return;
 
       const lowSpec = document.documentElement.classList.contains("it-low-spec");
-      const delay = lowSpec ? 1000 / 12 : 1000 / 30;
+      // A once-per-second tick cuts Calendar clock work by about 97% compared
+      // with the normal 30 FPS sweep while remaining accurate and readable.
+      const delay = lowSpec ? 1000 : 1000 / 30;
       timer = window.setTimeout(() => {
         frame = requestAnimationFrame(applyTime);
       }, delay);
@@ -69,7 +71,7 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
     const observer = new IntersectionObserver(([entry]) => {
       visible = entry?.isIntersecting ?? true;
       start();
-    }, { rootMargin:"80px" });
+    }, { rootMargin:"40px" });
 
     if (rootRef.current) observer.observe(rootRef.current);
     document.addEventListener("visibilitychange", start);
