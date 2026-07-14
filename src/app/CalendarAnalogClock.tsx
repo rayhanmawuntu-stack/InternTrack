@@ -94,7 +94,8 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
           fontSize={value === 12 ? 11 : 10.5}
           fontWeight={800}
           paintOrder="stroke"
-          stroke="rgba(57,8,34,0.72)"
+          stroke="var(--it-ink)"
+          strokeOpacity={0.72}
           strokeWidth={2.2}
           style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", userSelect:"none" }}>
           {value}
@@ -116,10 +117,10 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
           cx={cx}
           cy={cy - radius + 7}
           r={5.2}
-          fill="#fff7fb"
-          stroke="#e11d48"
+          fill="#fff"
+          stroke="var(--it-primary)"
           strokeWidth={2.2}
-          style={{ filter:"drop-shadow(0 0 7px rgba(244,114,182,0.48))" }}
+          style={{ filter:"drop-shadow(0 0 7px rgba(var(--it-accent-rgb),0.48))" }}
         />
       </g>
 
@@ -129,7 +130,7 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
           y1={cy - radius + 9}
           x2={cx}
           y2={cy - radius * 0.20}
-          stroke="#f9a8d4"
+          stroke="var(--it-accent-light)"
           strokeWidth={3.1}
           strokeLinecap="round"
           style={{ filter:"drop-shadow(0 2px 4px rgba(20,0,12,0.48))" }}
@@ -138,10 +139,10 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
           cx={cx}
           cy={cy - radius + 9}
           r={4.1}
-          fill="#f9a8d4"
-          stroke="#7c163f"
+          fill="var(--it-accent-light)"
+          stroke="var(--it-primary-dark)"
           strokeWidth={1.8}
-          style={{ filter:"drop-shadow(0 0 6px rgba(249,168,212,0.5))" }}
+          style={{ filter:"drop-shadow(0 0 6px rgba(var(--it-accent-light-rgb),0.5))" }}
         />
       </g>
 
@@ -151,7 +152,7 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
           y1={cy - radius + 5}
           x2={cx}
           y2={cy - radius * 0.05}
-          stroke="#fb7185"
+          stroke="var(--it-primary)"
           strokeWidth={1.25}
           strokeLinecap="round"
           style={{ filter:"drop-shadow(0 1px 3px rgba(20,0,12,0.42))" }}
@@ -160,10 +161,10 @@ export default function CalendarAnalogClock({ cx, cy, radius = 157 }: Props) {
           cx={cx}
           cy={cy - radius + 5}
           r={2.8}
-          fill="#fb7185"
-          stroke="#7f1d3f"
+          fill="var(--it-primary)"
+          stroke="var(--it-primary-dark)"
           strokeWidth={1.2}
-          style={{ filter:"drop-shadow(0 0 5px rgba(251,113,133,0.55))" }}
+          style={{ filter:"drop-shadow(0 0 5px rgba(var(--it-primary-rgb),0.55))" }}
         />
       </g>
     </g>
