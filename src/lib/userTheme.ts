@@ -31,6 +31,7 @@ export const USER_COLOR_SCHEMES: ThemeDefinition[] = [
       "--it-bg-deep":"#db2777",
       "--it-bg-end":"#be185d",
       "--it-ink":"#3d0a20",
+      "--it-ink-rgb":"61,10,32",
     },
   },
   {
@@ -54,6 +55,7 @@ export const USER_COLOR_SCHEMES: ThemeDefinition[] = [
       "--it-bg-deep":"#3b82f6",
       "--it-bg-end":"#1d4ed8",
       "--it-ink":"#102a43",
+      "--it-ink-rgb":"16,42,67",
     },
   },
   {
@@ -77,6 +79,7 @@ export const USER_COLOR_SCHEMES: ThemeDefinition[] = [
       "--it-bg-deep":"#8b5cf6",
       "--it-bg-end":"#6d28d9",
       "--it-ink":"#2e1065",
+      "--it-ink-rgb":"46,16,101",
     },
   },
   {
@@ -100,6 +103,7 @@ export const USER_COLOR_SCHEMES: ThemeDefinition[] = [
       "--it-bg-deep":"#10b981",
       "--it-bg-end":"#047857",
       "--it-ink":"#053b31",
+      "--it-ink-rgb":"5,59,49",
     },
   },
   {
@@ -123,6 +127,7 @@ export const USER_COLOR_SCHEMES: ThemeDefinition[] = [
       "--it-bg-deep":"#f59e0b",
       "--it-bg-end":"#b45309",
       "--it-ink":"#422006",
+      "--it-ink-rgb":"66,32,6",
     },
   },
 ];
