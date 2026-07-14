@@ -9,6 +9,23 @@ if "remainingThemeSyncV1" not in app:
         "// userSelectedColorSchemeV1: each profile owns and restores its selected palette.\n// remainingThemeSyncV1: replace fixed text and surface colors across generated views.",
         1,
     )
+    settings_anchor = '''  const [saved, setSaved]     = useState(false);
+  const [showDanger, setShowDanger] = useState(false);
+
+  // Preview: what would end time look like if clocked in right now'''
+    settings_replacement = '''  const [saved, setSaved]     = useState(false);
+  const [showDanger, setShowDanger] = useState(false);
+
+  useEffect(() => {
+    const nextScheme = savedUserColorScheme(user.id);
+    setColorScheme(nextScheme);
+    applyUserColorScheme(nextScheme);
+  }, [user.id]);
+
+  // Preview: what would end time look like if clocked in right now'''
+    if settings_anchor not in app:
+        raise RuntimeError("Could not locate Settings color state synchronization anchor.")
+    app = app.replace(settings_anchor, settings_replacement, 1)
     app = app.replace("#3d0a20", "var(--it-ink)")
     app = app.replace("#2b091b", "var(--it-ink)")
     app = app.replace("rgba(61,10,32,", "rgba(var(--it-ink-rgb),")
