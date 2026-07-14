@@ -3,12 +3,11 @@ from pathlib import Path
 path = Path('src/app/App.tsx')
 text = path.read_text(encoding='utf-8')
 
-if 'runtimePerformanceSafeV2' in text:
-    print('Safe runtime performance optimizations are already applied.')
+if 'runtimePerformanceLowSpecV3' in text:
+    print('Low-spec runtime performance optimizations are already applied.')
     raise SystemExit(0)
 
-# Keep this transform deliberately conservative. It only changes runtime timing
-# and animation costs; it does not rewrite imports or split the bundle.
+# Keep this transform conservative: no import rewrites or risky bundle splitting.
 old_ticker = '''  // Clock ticker
   useEffect(() => {
     const t = setInterval(() => {
@@ -18,7 +17,7 @@ old_ticker = '''  // Clock ticker
     return () => clearInterval(t);
   }, [clockedIn, clockInTime]);
 '''
-new_ticker = '''  // runtimePerformanceSafeV2: update minute-level UI once per minute.
+new_ticker = '''  // runtimePerformanceLowSpecV3: update minute-level UI once per minute.
   // The Calendar second hand animates independently in CalendarAnalogClock.
   useEffect(() => {
     let timer = 0;
@@ -53,18 +52,55 @@ new_ticker = '''  // runtimePerformanceSafeV2: update minute-level UI once per m
       document.removeEventListener("visibilitychange", resumeClock);
     };
   }, [clockedIn, clockInTime]);
+
+  useEffect(() => {
+    type PerformanceNavigator = Navigator & {
+      deviceMemory?: number;
+      connection?: { saveData?: boolean; effectiveType?: string };
+    };
+
+    const nav = navigator as PerformanceNavigator;
+    const memory = nav.deviceMemory ?? 8;
+    const cores = nav.hardwareConcurrency || 8;
+    const connection = nav.connection;
+    const effectiveType = connection?.effectiveType || "";
+    const forcedMode = window.localStorage.getItem("it_performance_mode");
+    const detectedLowSpec = memory <= 4
+      || cores <= 4
+      || Boolean(connection?.saveData)
+      || effectiveType === "slow-2g"
+      || effectiveType === "2g";
+    const lowSpec = forcedMode === "low"
+      || (forcedMode !== "standard" && detectedLowSpec);
+
+    document.documentElement.classList.toggle("it-low-spec", lowSpec);
+    document.documentElement.dataset.performanceMode = lowSpec ? "low-spec" : "standard";
+
+    return () => {
+      document.documentElement.classList.remove("it-low-spec");
+      delete document.documentElement.dataset.performanceMode;
+    };
+  }, []);
 '''
 
 if old_ticker in text:
     text = text.replace(old_ticker, new_ticker, 1)
+elif 'runtimePerformanceSafeV2' in text:
+    print('Minute clock optimization already exists; low-spec detector was not duplicated.')
 else:
     print('Clock ticker already changed; leaving it unchanged.')
 
-text = text.replace(
-    'const refreshTimer = window.setInterval(refreshCloud, 30000);',
-    'const refreshTimer = window.setInterval(refreshCloud, 60000);',
-    1,
-)
+old_refresh = 'const refreshTimer = window.setInterval(refreshCloud, 30000);'
+new_refresh = '''const refreshDelay = document.documentElement.classList.contains("it-low-spec") ? 120000 : 60000;
+    const refreshTimer = window.setInterval(refreshCloud, refreshDelay);'''
+if old_refresh in text:
+    text = text.replace(old_refresh, new_refresh, 1)
+else:
+    text = text.replace(
+        'const refreshTimer = window.setInterval(refreshCloud, 60000);',
+        new_refresh,
+        1,
+    )
 
 old_animation = '''        @keyframes dashEnter {
           from { opacity: 0; transform: scale(0.96); filter: blur(10px); }
@@ -84,4 +120,4 @@ text = text.replace(
 )
 
 path.write_text(text, encoding='utf-8')
-print('Applied safe runtime performance optimizations.')
+print('Applied automatic low-spec runtime performance mode.')
