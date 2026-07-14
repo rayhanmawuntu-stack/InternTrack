@@ -1,10 +1,9 @@
 from pathlib import Path
 
-path = Path('src/app/App.tsx')
-text = path.read_text(encoding='utf-8')
+app_path = Path('src/app/App.tsx')
+text = app_path.read_text(encoding='utf-8')
 
-if 'runtimePerformanceLowSpecV3' not in text:
-    # Keep this transform conservative: no import rewrites or risky bundle splitting.
+if 'runtimePerformanceLowSpecV4' not in text:
     old_ticker = '''  // Clock ticker
   useEffect(() => {
     const t = setInterval(() => {
@@ -14,8 +13,9 @@ if 'runtimePerformanceLowSpecV3' not in text:
     return () => clearInterval(t);
   }, [clockedIn, clockInTime]);
 '''
-    new_ticker = '''  // runtimePerformanceLowSpecV3: update minute-level UI once per minute.
-  // The Calendar second hand animates independently in CalendarAnalogClock.
+
+    new_ticker = '''  // runtimePerformanceLowSpecV4: minute-level UI updates plus automatic economy mode.
+  // The Calendar clock animates independently and reduces itself to 1 FPS in low-spec mode.
   useEffect(() => {
     let timer = 0;
 
@@ -82,18 +82,28 @@ if 'runtimePerformanceLowSpecV3' not in text:
 
     if old_ticker in text:
         text = text.replace(old_ticker, new_ticker, 1)
+    elif 'runtimePerformanceLowSpecV3' in text:
+        text = text.replace('runtimePerformanceLowSpecV3', 'runtimePerformanceLowSpecV4', 1)
+    elif 'runtimePerformanceSafeV2' in text:
+        text = text.replace('runtimePerformanceSafeV2', 'runtimePerformanceLowSpecV4', 1)
     else:
         print('Clock ticker already changed; leaving it unchanged.')
 
     old_refresh = 'const refreshTimer = window.setInterval(refreshCloud, 30000);'
-    new_refresh = '''const refreshDelay = document.documentElement.classList.contains("it-low-spec") ? 120000 : 60000;
+    new_refresh = '''const refreshDelay = document.documentElement.classList.contains("it-low-spec") ? 300000 : 60000;
     const refreshTimer = window.setInterval(refreshCloud, refreshDelay);'''
     if old_refresh in text:
         text = text.replace(old_refresh, new_refresh, 1)
-    else:
+    elif 'const refreshTimer = window.setInterval(refreshCloud, 60000);' in text:
         text = text.replace(
             'const refreshTimer = window.setInterval(refreshCloud, 60000);',
             new_refresh,
+            1,
+        )
+    else:
+        text = text.replace(
+            'const refreshDelay = document.documentElement.classList.contains("it-low-spec") ? 120000 : 60000;',
+            'const refreshDelay = document.documentElement.classList.contains("it-low-spec") ? 300000 : 60000;',
             1,
         )
 
@@ -102,7 +112,7 @@ if 'runtimePerformanceLowSpecV3' not in text:
           to   { opacity: 1; transform: scale(1);    filter: blur(0);    }
         }'''
     new_animation = '''        @keyframes dashEnter {
-          from { opacity:0; transform:translateY(6px); }
+          from { opacity:0; transform:translateY(4px); }
           to   { opacity:1; transform:translateY(0); }
         }'''
     if old_animation in text:
@@ -110,21 +120,30 @@ if 'runtimePerformanceLowSpecV3' not in text:
 
     text = text.replace(
         'animation:"dashEnter 0.7s cubic-bezier(0.22,1,0.36,1) both"',
-        'animation:"dashEnter 0.28s cubic-bezier(0.22,1,0.36,1) both"',
+        'animation:"dashEnter 0.2s cubic-bezier(0.22,1,0.36,1) both"',
         1,
     )
 
-    path.write_text(text, encoding='utf-8')
+    app_path.write_text(text, encoding='utf-8')
 else:
-    print('Low-spec runtime detector is already applied.')
+    print('Low-spec V4 runtime detector is already applied.')
 
 styles_path = Path('src/styles/performance.css')
 styles = styles_path.read_text(encoding='utf-8')
 low_spec_css = r'''
 
-/* lowSpecPerformanceV3: automatically enabled on limited CPU/RAM or Data Saver. */
+/* lowSpecPerformanceV4: maximum economy mode for weak CPUs and integrated GPUs. */
+html.it-low-spec,
+html.it-low-spec body {
+  scroll-behavior: auto !important;
+}
+
 html.it-low-spec .it-app-shell > .fixed.rounded-full {
   display: none !important;
+}
+
+html.it-low-spec .it-app-shell > .fixed.inset-0 {
+  background: linear-gradient(145deg,#f472b6 0%,#db2777 58%,#be185d 100%) !important;
 }
 
 html.it-low-spec .it-app-shell aside,
@@ -140,9 +159,18 @@ html.it-low-spec .it-main [style*="backdrop-filter"] {
 html.it-low-spec .it-calendar-section,
 html.it-low-spec .it-clock-grid,
 html.it-low-spec .it-dashboard-lower,
-html.it-low-spec .it-main > .space-y-5 {
+html.it-low-spec .it-main > .space-y-5,
+html.it-low-spec .it-main > .grid {
   content-visibility: auto;
-  contain-intrinsic-size: 520px;
+  contain-intrinsic-size: 480px;
+  contain: layout paint style;
+}
+
+html.it-low-spec .it-stat-grid > *,
+html.it-low-spec .it-clock-card,
+html.it-low-spec .it-dashboard-lower > *,
+html.it-low-spec .it-month-calendar-card,
+html.it-low-spec .it-attendance-day {
   contain: layout paint style;
 }
 
@@ -153,18 +181,36 @@ html.it-low-spec .it-month-calendar-card::after {
   display: none !important;
 }
 
-html.it-low-spec .it-main *,
-html.it-low-spec .it-mobile-nav *,
-html.it-low-spec .it-app-shell aside * {
-  animation-duration: 0.001ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 80ms !important;
+html.it-low-spec .it-app-shell *,
+html.it-low-spec .it-app-shell *::before,
+html.it-low-spec .it-app-shell *::after {
+  animation: none !important;
+  transition: none !important;
+  will-change: auto !important;
 }
 
-html.it-low-spec .it-calendar-shell svg [style*="filter"],
-html.it-low-spec .it-calendar-shell svg line,
-html.it-low-spec .it-calendar-shell svg circle {
+html.it-low-spec .it-main button:hover,
+html.it-low-spec .it-mobile-nav button:hover,
+html.it-low-spec .it-app-shell aside button:hover,
+html.it-low-spec .it-attendance-day:hover,
+html.it-low-spec .it-clock-card:hover,
+html.it-low-spec .it-stat-grid > *:hover,
+html.it-low-spec .it-dashboard-lower > *:hover,
+html.it-low-spec .it-month-calendar-card:hover {
+  transform: none !important;
+}
+
+html.it-low-spec .it-calendar-shell svg *,
+html.it-low-spec .it-app-shell [style*="filter"] {
   filter: none !important;
+}
+
+html.it-low-spec .it-clock-card,
+html.it-low-spec .it-stat-grid > *,
+html.it-low-spec .it-dashboard-lower > *,
+html.it-low-spec .it-month-calendar-card,
+html.it-low-spec .it-attendance-day {
+  box-shadow: 0 2px 8px rgba(96,18,54,0.07) !important;
 }
 
 html.it-low-spec .it-shift-progress-sweep {
@@ -172,39 +218,32 @@ html.it-low-spec .it-shift-progress-sweep {
 }
 
 html.it-low-spec .it-shift-progress-glow.is-active {
-  animation: none !important;
-  opacity: 0.62 !important;
+  opacity: 0.58 !important;
   transform: translate3d(0,-50%,0) !important;
-  box-shadow: 0 0 8px rgba(249,168,212,0.72), 0 0 16px rgba(225,29,72,0.38) !important;
-}
-
-html.it-low-spec .it-shift-progress-fill,
-html.it-low-spec .it-shift-progress-beacon {
-  animation: none !important;
+  box-shadow: 0 0 7px rgba(249,168,212,0.62), 0 0 13px rgba(225,29,72,0.30) !important;
 }
 
 html.it-low-spec .it-shift-progress-fill {
-  box-shadow: 0 0 7px rgba(249,168,212,0.65) !important;
+  box-shadow: 0 0 5px rgba(249,168,212,0.52) !important;
 }
 
 html.it-low-spec .it-shift-progress-beacon {
-  opacity: 0.92 !important;
+  opacity: 0.9 !important;
   transform: translate3d(-50%,-50%,0) !important;
-  box-shadow: 0 0 9px rgba(249,168,212,0.72) !important;
+  box-shadow: 0 0 7px rgba(249,168,212,0.58) !important;
 }
 
-html.it-low-spec .it-stat-grid > *,
-html.it-low-spec .it-clock-card,
-html.it-low-spec .it-dashboard-lower > *,
-html.it-low-spec .it-month-calendar-card,
-html.it-low-spec .it-attendance-day {
-  box-shadow: 0 3px 12px rgba(96,18,54,0.08) !important;
+html.it-low-spec .it-main input:focus,
+html.it-low-spec .it-main textarea:focus,
+html.it-low-spec .it-main select:focus {
+  transform: none !important;
+  box-shadow: 0 0 0 2px rgba(244,114,182,0.12) !important;
 }
 '''
 
-if 'lowSpecPerformanceV3' not in styles:
+if 'lowSpecPerformanceV4' not in styles:
     styles_path.write_text(styles.rstrip() + low_spec_css + '\n', encoding='utf-8')
 else:
-    print('Low-spec CSS overrides are already applied.')
+    print('Low-spec V4 CSS overrides are already applied.')
 
-print('Applied automatic low-spec runtime performance mode.')
+print('Applied maximum economy mode for low-spec PCs.')
