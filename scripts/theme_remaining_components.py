@@ -29,6 +29,11 @@ if "remainingThemeSyncV1" not in app:
     app = app.replace("#3d0a20", "var(--it-ink)")
     app = app.replace("#2b091b", "var(--it-ink)")
     app = app.replace("rgba(61,10,32,", "rgba(var(--it-ink-rgb),")
+    # The dark sign-in/onboarding glow now follows the selected profile too.
+    app = app.replace("#7eb3ff", "var(--it-accent-light)")
+    app = app.replace("#a0c4ff", "var(--it-accent-light)")
+    app = app.replace("#9b6fd4", "var(--it-accent)")
+    app = app.replace("#d4956a", "var(--it-primary-dark)")
     app_path.write_text(app, encoding="utf-8")
 
 month_path = Path("src/app/ScrollableMonthCalendar.tsx")
