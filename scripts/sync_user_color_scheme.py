@@ -181,4 +181,83 @@ source = source.replace(
 )
 
 path.write_text(source, encoding="utf-8")
+
+styles_path = Path("src/styles/performance.css")
+styles = styles_path.read_text(encoding="utf-8")
+theme_css = r'''
+
+/* userSelectedColorSchemeV1: defaults plus utility-class compatibility. */
+:root {
+  --it-primary: #e11d48;
+  --it-primary-dark: #be185d;
+  --it-primary-rgb: 225,29,72;
+  --it-primary-dark-rgb: 190,24,93;
+  --it-accent: #f472b6;
+  --it-accent-rgb: 244,114,182;
+  --it-accent-light: #f9a8d4;
+  --it-accent-light-rgb: 249,168,212;
+  --it-accent-pale: #fbcfe8;
+  --it-accent-wash: #fce4ec;
+  --it-accent-bright: #ff80c0;
+  --it-bg-soft: #fda4c8;
+  --it-bg-mid: #e879a0;
+  --it-bg-deep: #db2777;
+  --it-bg-end: #be185d;
+  --it-ink: #3d0a20;
+}
+
+html[data-it-color-scheme] {
+  --background: var(--it-accent-light);
+  --primary: var(--it-primary);
+  --secondary-foreground: var(--it-primary-dark);
+  --accent: var(--it-accent);
+  --ring: var(--it-accent);
+  --chart-1: var(--it-primary);
+  --chart-2: var(--it-accent);
+  --chart-3: var(--it-primary-dark);
+}
+
+html[data-it-color-scheme] .it-app-shell [class*="text-pink-"],
+html[data-it-color-scheme] .it-signin-screen [class*="text-pink-"],
+html[data-it-color-scheme] .it-loading-screen [class*="text-pink-"] {
+  color: var(--it-primary-dark) !important;
+}
+
+html[data-it-color-scheme] .it-app-shell [class*="bg-pink-"],
+html[data-it-color-scheme] .it-signin-screen [class*="bg-pink-"] {
+  background-color: var(--it-accent-pale) !important;
+}
+
+html[data-it-color-scheme] .it-app-shell [class*="border-pink-"] {
+  border-color: var(--it-accent) !important;
+}
+
+html[data-it-color-scheme] .it-app-shell [class*="accent-pink-"] {
+  accent-color: var(--it-primary) !important;
+}
+
+html[data-it-color-scheme] .it-app-shell [class*="placeholder:text-pink-"]::placeholder {
+  color: color-mix(in srgb, var(--it-accent) 45%, transparent) !important;
+}
+
+html[data-it-color-scheme] .it-app-shell [class*="hover:bg-pink-"]:hover,
+html[data-it-color-scheme] .it-signin-screen [class*="hover:bg-pink-"]:hover {
+  background-color: color-mix(in srgb, var(--it-accent-pale) 74%, white) !important;
+}
+
+html[data-it-color-scheme] .it-main input:focus,
+html[data-it-color-scheme] .it-main textarea:focus,
+html[data-it-color-scheme] .it-main select:focus {
+  border-color: rgba(var(--it-accent-rgb),0.58) !important;
+  box-shadow: 0 0 0 3px rgba(var(--it-accent-rgb),0.12), 0 6px 18px rgba(var(--it-primary-dark-rgb),0.08);
+}
+
+html[data-it-color-scheme] .it-shift-progress-glow.is-active {
+  box-shadow: 0 0 8px rgba(var(--it-accent-light-rgb),0.92), 0 0 18px rgba(var(--it-accent-rgb),0.72), 0 0 30px rgba(var(--it-primary-rgb),0.48) !important;
+}
+'''
+
+if "userSelectedColorSchemeV1: defaults" not in styles:
+    styles_path.write_text(styles.rstrip() + theme_css + "\n", encoding="utf-8")
+
 print("Synchronized the full interface with each user's selected color scheme.")
