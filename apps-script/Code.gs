@@ -18,6 +18,7 @@ const INTERNTRACK_NOTES_SHEET_NAME = 'InternTrackNotes';
 const INTERNTRACK_CALENDAR_SHEET_NAME = 'InternTrackCalendar';
 const INTERNTRACK_SETTINGS_SHEET_NAME = 'InternTrackSettings';
 const INTERNTRACK_HOLIDAYS_SHEET_NAME = 'InternTrackHolidays';
+const INTERNTRACK_AUTH_SHEET_NAME = 'InternTrackAuth';
 const INTERNTRACK_HEADERS = [
   'workspace_id',
   'storage_key',
@@ -61,11 +62,19 @@ const INTERNTRACK_SETTINGS_HEADERS = [
 const INTERNTRACK_HOLIDAYS_HEADERS = [
   'date', 'title', 'type', 'country', 'source', 'updated_at'
 ];
+const INTERNTRACK_AUTH_HEADERS = [
+  'workspace_id', 'user_id', 'salt', 'pin_hash', 'failed_attempts', 'locked_until', 'updated_at'
+];
 const INTERNTRACK_HOLIDAY_CALENDAR_IDS = [
   'id.indonesian#holiday@group.v.calendar.google.com',
   'en.indonesian#holiday@group.v.calendar.google.com'
 ];
 const INTERNTRACK_CHUNK_SIZE = 45000;
+const INTERNTRACK_PIN_LENGTH = 6;
+const INTERNTRACK_MAX_PIN_ATTEMPTS = 5;
+const INTERNTRACK_PIN_LOCK_MS = 15 * 60 * 1000;
+const INTERNTRACK_SESSION_TTL_SECONDS = 6 * 60 * 60;
+const INTERNTRACK_AUTH_RESULT_TTL_SECONDS = 90;
 
 function setup() {
   const active = SpreadsheetApp.getActiveSpreadsheet();
@@ -83,6 +92,7 @@ function setup() {
   prepareReadableSheet_(getCalendarSheet_(), INTERNTRACK_CALENDAR_HEADERS);
   prepareReadableSheet_(getSettingsSheet_(), INTERNTRACK_SETTINGS_HEADERS);
   prepareReadableSheet_(getHolidaysSheet_(), INTERNTRACK_HOLIDAYS_HEADERS);
+  prepareReadableSheet_(getAuthSheet_(), INTERNTRACK_AUTH_HEADERS);
 
   rebuildAllReadableMirrors_();
   syncIndonesiaHolidays();
@@ -96,10 +106,20 @@ function doGet(e) {
     const action = params.action || 'health';
     let payload;
 
-    if (action === 'dump') {
+    if (action === 'profiles') {
       const workspaceId = requireWorkspace_(params.workspaceId);
+      payload = {
+        ok: true,
+        profiles: listPublicProfiles_(workspaceId),
+        serverTime: new Date().toISOString()
+      };
+    } else if (action === 'auth_result') {
+      payload = takeAuthResult_(params.requestId);
+    } else if (action === 'dump') {
+      const workspaceId = requireWorkspace_(params.workspaceId);
+      const session = requireSession_(workspaceId, params.sessionToken);
       maybeSyncIndonesiaHolidays_();
-      const data = dumpWorkspace_(workspaceId);
+      const data = dumpWorkspaceForUser_(workspaceId, session.userId);
       const holidays = readIndonesiaHolidays_();
       data.it_holidays_id = {
         value: JSON.stringify(holidays),
@@ -109,20 +129,26 @@ function doGet(e) {
       payload = {
         ok: true,
         data: data,
+        sessionExpiresAt: session.expiresAt,
         serverTime: new Date().toISOString()
       };
     } else {
       payload = {
         ok: true,
         service: 'InternTrack Google Sheets backend',
-        version: 7,
+        version: 8,
+        pinAuthentication: true,
         serverTime: new Date().toISOString()
       };
     }
 
     return output_(payload, params.callback);
   } catch (error) {
-    return output_({ ok: false, error: String(error && error.message || error) }, e && e.parameter && e.parameter.callback);
+    return output_({
+      ok: false,
+      code: String(error && error.code || 'REQUEST_ERROR'),
+      error: String(error && error.message || error)
+    }, e && e.parameter && e.parameter.callback);
   }
 }
 
@@ -288,15 +314,33 @@ function companySpecificHolidays2026_() {
 }
 
 function doPost(e) {
+  let body = {};
   try {
-    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    if (body.action !== 'batch') throw new Error('Unsupported action.');
+    body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    const action = String(body.action || '');
+
+    if (['verify_pin', 'claim_pin', 'register_profile', 'sign_out'].indexOf(action) >= 0) {
+      const requestId = requireRequestId_(body.requestId);
+      try {
+        const authPayload = handleAuthAction_(action, body);
+        storeAuthResult_(requestId, authPayload);
+      } catch (authError) {
+        storeAuthResult_(requestId, authErrorPayload_(authError));
+      }
+      return output_({ ok: true, accepted: true });
+    }
+
+    if (action !== 'batch') throw new Error('Unsupported action.');
 
     const workspaceId = requireWorkspace_(body.workspaceId);
+    const session = requireSession_(workspaceId, body.sessionToken);
     const changes = Array.isArray(body.changes) ? body.changes.slice(0, 250) : [];
     if (!changes.length) return output_({ ok: true, saved: 0 });
 
-    const result = saveBatch_(workspaceId, changes);
+    const result = saveAuthorizedBatch_(workspaceId, session.userId, changes);
+    if (result.profileDeleted) {
+      deletePinRecord_(workspaceId, session.userId);
+    }
     return output_({
       ok: true,
       saved: result.saved,
@@ -304,8 +348,439 @@ function doPost(e) {
       serverTime: new Date().toISOString()
     });
   } catch (error) {
-    return output_({ ok: false, error: String(error && error.message || error) });
+    return output_({
+      ok: false,
+      code: String(error && error.code || 'REQUEST_ERROR'),
+      error: String(error && error.message || error)
+    });
   }
+}
+
+function handleAuthAction_(action, body) {
+  const workspaceId = requireWorkspace_(body.workspaceId);
+
+  if (action === 'sign_out') {
+    requireSession_(workspaceId, body.sessionToken);
+    revokeSession_(body.sessionToken);
+    return { ok: true, signedOut: true };
+  }
+
+  const pin = requirePin_(body.pin);
+  if (action === 'register_profile') {
+    return registerProfile_(workspaceId, body.profile, pin, body.sessionToken);
+  }
+
+  const userId = requireUserId_(body.userId);
+  if (action === 'claim_pin') {
+    return claimPin_(workspaceId, userId, pin);
+  }
+  if (action === 'verify_pin') {
+    return verifyPin_(workspaceId, userId, pin);
+  }
+  throw new Error('Unsupported authentication action.');
+}
+
+function registerProfile_(workspaceId, rawProfile, pin, sponsorToken) {
+  const profile = sanitizeProfile_(rawProfile);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+
+  try {
+    const data = dumpWorkspace_(workspaceId);
+    const users = readUsersFromData_(data);
+    if (users.length) requireSession_(workspaceId, sponsorToken);
+    if (users.some(function(user) { return String(user.id) === profile.id; })) {
+      throw authError_('PROFILE_EXISTS', 'That profile already exists.');
+    }
+
+    users.push(profile);
+    const currentUsersStamp = data.it_users ? Date.parse(data.it_users.updatedAt || '') || 0 : 0;
+    saveBatchUnlocked_(workspaceId, [{
+      key: 'it_users',
+      value: JSON.stringify(users),
+      deleted: false,
+      updatedAt: new Date(Math.max(Date.now(), currentUsersStamp + 1)).toISOString()
+    }]);
+    createPinRecord_(workspaceId, profile.id, pin);
+
+    const session = issueSession_(workspaceId, profile.id);
+    if (sponsorToken) revokeSession_(sponsorToken);
+    return {
+      ok: true,
+      profile: publicProfile_(profile, true),
+      sessionToken: session.token,
+      sessionExpiresAt: session.expiresAt
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function claimPin_(workspaceId, userId, pin) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+
+  try {
+    requireExistingProfile_(workspaceId, userId);
+    const existing = readPinRecord_(workspaceId, userId);
+    if (existing && existing.pinHash) {
+      throw authError_('PIN_ALREADY_SET', 'This profile already has a PIN. Enter the existing PIN instead.');
+    }
+    createPinRecord_(workspaceId, userId, pin);
+    const session = issueSession_(workspaceId, userId);
+    return {
+      ok: true,
+      claimed: true,
+      sessionToken: session.token,
+      sessionExpiresAt: session.expiresAt
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function verifyPin_(workspaceId, userId, pin) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+
+  try {
+    requireExistingProfile_(workspaceId, userId);
+    const record = readPinRecord_(workspaceId, userId);
+    if (!record || !record.pinHash) {
+      throw authError_('PIN_NOT_SET', 'Create a PIN for this profile before continuing.');
+    }
+
+    const lockedUntilMs = Date.parse(record.lockedUntil || '') || 0;
+    if (lockedUntilMs > Date.now()) {
+      const lockedError = authError_('PIN_LOCKED', 'Too many incorrect attempts. Try again after the lock expires.');
+      lockedError.lockedUntil = new Date(lockedUntilMs).toISOString();
+      throw lockedError;
+    }
+
+    const candidate = pinHash_(workspaceId, userId, pin, record.salt);
+    if (!constantTimeEquals_(candidate, record.pinHash)) {
+      const failedAttempts = (record.failedAttempts || 0) + 1;
+      const shouldLock = failedAttempts >= INTERNTRACK_MAX_PIN_ATTEMPTS;
+      record.failedAttempts = shouldLock ? 0 : failedAttempts;
+      record.lockedUntil = shouldLock ? new Date(Date.now() + INTERNTRACK_PIN_LOCK_MS).toISOString() : '';
+      record.updatedAt = new Date().toISOString();
+      writePinRecord_(record);
+
+      const invalidError = authError_(shouldLock ? 'PIN_LOCKED' : 'INVALID_PIN', shouldLock
+        ? 'Too many incorrect attempts. This profile is locked for 15 minutes.'
+        : 'Incorrect PIN.');
+      invalidError.attemptsRemaining = shouldLock ? 0 : INTERNTRACK_MAX_PIN_ATTEMPTS - failedAttempts;
+      invalidError.lockedUntil = record.lockedUntil || null;
+      throw invalidError;
+    }
+
+    record.failedAttempts = 0;
+    record.lockedUntil = '';
+    record.updatedAt = new Date().toISOString();
+    writePinRecord_(record);
+
+    const session = issueSession_(workspaceId, userId);
+    return {
+      ok: true,
+      sessionToken: session.token,
+      sessionExpiresAt: session.expiresAt
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function listPublicProfiles_(workspaceId) {
+  const data = dumpWorkspace_(workspaceId);
+  const pinUsers = pinUserMap_(workspaceId);
+  return readUsersFromData_(data).map(function(user) {
+    return publicProfile_(user, Boolean(pinUsers[String(user.id)]));
+  });
+}
+
+function dumpWorkspaceForUser_(workspaceId, userId) {
+  const data = dumpWorkspace_(workspaceId);
+  const allowed = userStorageKeyMap_(userId);
+  const filtered = {};
+
+  Object.keys(data).forEach(function(key) {
+    if (allowed[key]) filtered[key] = data[key];
+  });
+
+  filtered.it_users = {
+    value: JSON.stringify(listPublicProfiles_(workspaceId)),
+    deleted: false,
+    updatedAt: data.it_users ? data.it_users.updatedAt : new Date().toISOString()
+  };
+  return filtered;
+}
+
+function readUsersFromData_(data) {
+  if (!data.it_users || data.it_users.deleted) return [];
+  const users = safeJsonParse_(data.it_users.value, []);
+  return Array.isArray(users) ? users.filter(function(user) { return user && user.id; }) : [];
+}
+
+function requireExistingProfile_(workspaceId, userId) {
+  const user = readUsersFromData_(dumpWorkspace_(workspaceId)).find(function(entry) {
+    return String(entry.id) === userId;
+  });
+  if (!user) throw authError_('PROFILE_NOT_FOUND', 'Profile not found. Refresh and try again.');
+  return user;
+}
+
+function sanitizeProfile_(rawProfile) {
+  const source = rawProfile && typeof rawProfile === 'object' ? rawProfile : {};
+  const id = requireUserId_(source.id);
+  const name = String(source.name || '').trim().slice(0, 120);
+  const role = String(source.role || '').trim().slice(0, 120);
+  const department = String(source.department || '').trim().slice(0, 120);
+  if (!name || !role || !department) throw authError_('INVALID_PROFILE', 'Name, role, and department are required.');
+  const firstName = name.split(/\s+/)[0];
+  const initials = name.split(/\s+/).map(function(part) { return part.charAt(0).toUpperCase(); }).join('').slice(0, 2);
+  const startDate = /^\d{4}-\d{2}-\d{2}$/.test(String(source.startDate || ''))
+    ? String(source.startDate)
+    : Utilities.formatDate(new Date(), 'Asia/Jakarta', 'yyyy-MM-dd');
+  return { id: id, name: name, firstName: firstName, role: role, department: department, initials: initials, startDate: startDate };
+}
+
+function publicProfile_(user, hasPin) {
+  const profile = sanitizeProfile_(user);
+  profile.hasPin = Boolean(hasPin);
+  return profile;
+}
+
+function userStorageKeyMap_(userId) {
+  const map = {};
+  ['it_act_', 'it_note_', 'it_att_', 'it_wh_', 'it_notesv2_', 'it_cal_', 'it_settings_'].forEach(function(prefix) {
+    map[prefix + userId] = true;
+  });
+  return map;
+}
+
+function saveAuthorizedBatch_(workspaceId, userId, changes) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+
+  try {
+    const data = dumpWorkspace_(workspaceId);
+    const existingUsers = readUsersFromData_(data);
+    const allowedKeys = userStorageKeyMap_(userId);
+    const sanitizedChanges = [];
+    let profileDeleted = false;
+
+    changes.forEach(function(change) {
+      const key = sanitizeKey_(change && change.key);
+      if (key === 'it_users') {
+        const submitted = safeJsonParse_(change && change.value, []);
+        if (!Array.isArray(submitted)) throw new Error('Invalid users payload.');
+        const ownSubmitted = submitted.find(function(user) { return user && String(user.id) === userId; });
+        const currentIndex = existingUsers.findIndex(function(user) { return String(user.id) === userId; });
+        if (currentIndex < 0) throw new Error('Authenticated profile no longer exists.');
+
+        const nextUsers = existingUsers.slice();
+        if (ownSubmitted) nextUsers[currentIndex] = sanitizeProfile_(ownSubmitted);
+        else {
+          nextUsers.splice(currentIndex, 1);
+          profileDeleted = true;
+        }
+        sanitizedChanges.push({
+          key: 'it_users',
+          value: JSON.stringify(nextUsers),
+          deleted: false,
+          updatedAt: change.updatedAt
+        });
+        return;
+      }
+
+      if (!allowedKeys[key]) throw new Error('This session cannot modify data for another profile.');
+      sanitizedChanges.push(change);
+    });
+
+    const result = saveBatchUnlocked_(workspaceId, sanitizedChanges);
+    result.profileDeleted = profileDeleted && result.savedKeys.indexOf('it_users') >= 0;
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function createPinRecord_(workspaceId, userId, pin) {
+  const salt = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+  writePinRecord_({
+    workspaceId: workspaceId,
+    userId: userId,
+    salt: salt,
+    pinHash: pinHash_(workspaceId, userId, pin, salt),
+    failedAttempts: 0,
+    lockedUntil: '',
+    updatedAt: new Date().toISOString()
+  });
+}
+
+function pinHash_(workspaceId, userId, pin, salt) {
+  const properties = PropertiesService.getScriptProperties();
+  let pepper = properties.getProperty('INTERNTRACK_PIN_PEPPER');
+  if (!pepper) {
+    pepper = Utilities.getUuid() + Utilities.getUuid() + Utilities.getUuid();
+    properties.setProperty('INTERNTRACK_PIN_PEPPER', pepper);
+  }
+  const value = workspaceId + '\n' + userId + '\n' + pin + '\n' + salt;
+  const signature = Utilities.computeHmacSha256Signature(value, pepper, Utilities.Charset.UTF_8);
+  return Utilities.base64EncodeWebSafe(signature);
+}
+
+function readPinRecord_(workspaceId, userId) {
+  const sheet = getAuthSheet_();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const rows = sheet.getRange(2, 1, lastRow - 1, INTERNTRACK_AUTH_HEADERS.length).getValues();
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (String(row[0]) === workspaceId && String(row[1]) === userId) {
+      return {
+        rowNumber: index + 2,
+        workspaceId: workspaceId,
+        userId: userId,
+        salt: String(row[2] || ''),
+        pinHash: String(row[3] || ''),
+        failedAttempts: Number(row[4]) || 0,
+        lockedUntil: normalizeOptionalDate_(row[5]),
+        updatedAt: normalizeDate_(row[6])
+      };
+    }
+  }
+  return null;
+}
+
+function writePinRecord_(record) {
+  const sheet = getAuthSheet_();
+  const existing = readPinRecord_(record.workspaceId, record.userId);
+  const row = [[
+    record.workspaceId,
+    record.userId,
+    record.salt,
+    record.pinHash,
+    Number(record.failedAttempts) || 0,
+    record.lockedUntil || '',
+    normalizeDate_(record.updatedAt)
+  ]];
+  if (existing) sheet.getRange(existing.rowNumber, 1, 1, INTERNTRACK_AUTH_HEADERS.length).setValues(row);
+  else sheet.getRange(sheet.getLastRow() + 1, 1, 1, INTERNTRACK_AUTH_HEADERS.length).setValues(row);
+}
+
+function deletePinRecord_(workspaceId, userId) {
+  const record = readPinRecord_(workspaceId, userId);
+  if (record) getAuthSheet_().deleteRow(record.rowNumber);
+}
+
+function pinUserMap_(workspaceId) {
+  const sheet = getAuthSheet_();
+  const lastRow = sheet.getLastRow();
+  const result = {};
+  if (lastRow < 2) return result;
+  sheet.getRange(2, 1, lastRow - 1, INTERNTRACK_AUTH_HEADERS.length).getValues().forEach(function(row) {
+    if (String(row[0]) === workspaceId && String(row[3] || '')) result[String(row[1])] = true;
+  });
+  return result;
+}
+
+function issueSession_(workspaceId, userId) {
+  const token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+  const expiresAt = new Date(Date.now() + INTERNTRACK_SESSION_TTL_SECONDS * 1000).toISOString();
+  CacheService.getScriptCache().put(sessionCacheKey_(token), JSON.stringify({
+    workspaceId: workspaceId,
+    userId: userId,
+    expiresAt: expiresAt
+  }), INTERNTRACK_SESSION_TTL_SECONDS);
+  return { token: token, expiresAt: expiresAt };
+}
+
+function requireSession_(workspaceId, tokenValue) {
+  const token = String(tokenValue || '').trim();
+  if (!/^[a-f0-9]{64}$/i.test(token)) throw authError_('SESSION_REQUIRED', 'Enter your PIN to continue.');
+  const raw = CacheService.getScriptCache().get(sessionCacheKey_(token));
+  const session = safeJsonParse_(raw, null);
+  if (!session || session.workspaceId !== workspaceId || !session.userId || Date.parse(session.expiresAt || '') <= Date.now()) {
+    throw authError_('SESSION_EXPIRED', 'Your secure session expired. Enter your PIN again.');
+  }
+  return session;
+}
+
+function revokeSession_(tokenValue) {
+  const token = String(tokenValue || '').trim();
+  if (/^[a-f0-9]{64}$/i.test(token)) CacheService.getScriptCache().remove(sessionCacheKey_(token));
+}
+
+function sessionCacheKey_(token) {
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token, Utilities.Charset.UTF_8);
+  return 'session:' + Utilities.base64EncodeWebSafe(digest);
+}
+
+function storeAuthResult_(requestId, payload) {
+  CacheService.getScriptCache().put('auth-result:' + requestId, JSON.stringify(payload), INTERNTRACK_AUTH_RESULT_TTL_SECONDS);
+}
+
+function takeAuthResult_(requestIdValue) {
+  const requestId = requireRequestId_(requestIdValue);
+  const cache = CacheService.getScriptCache();
+  const key = 'auth-result:' + requestId;
+  const raw = cache.get(key);
+  if (!raw) return { ok: true, pending: true };
+  return safeJsonParse_(raw, { ok: false, error: 'Authentication result could not be read.' });
+}
+
+function authErrorPayload_(error) {
+  return {
+    ok: false,
+    code: String(error && error.code || 'AUTH_ERROR'),
+    error: String(error && error.message || error || 'Authentication failed.'),
+    attemptsRemaining: error && error.attemptsRemaining != null ? error.attemptsRemaining : null,
+    lockedUntil: error && error.lockedUntil || null
+  };
+}
+
+function authError_(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function requireRequestId_(value) {
+  const requestId = String(value || '').trim();
+  if (!/^[a-f0-9-]{20,80}$/i.test(requestId)) throw new Error('Invalid request ID.');
+  return requestId;
+}
+
+function requireUserId_(value) {
+  const userId = String(value || '').trim();
+  if (!/^[a-zA-Z0-9_-]{5,80}$/.test(userId)) throw authError_('INVALID_PROFILE', 'Invalid profile ID.');
+  return userId;
+}
+
+function requirePin_(value) {
+  const pin = String(value || '').trim();
+  if (!new RegExp('^\\d{' + INTERNTRACK_PIN_LENGTH + '}$').test(pin)) {
+    throw authError_('INVALID_PIN_FORMAT', 'PIN must contain exactly ' + INTERNTRACK_PIN_LENGTH + ' digits.');
+  }
+  return pin;
+}
+
+function constantTimeEquals_(left, right) {
+  const a = String(left || '');
+  const b = String(right || '');
+  let difference = a.length ^ b.length;
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    difference |= (a.charCodeAt(index % Math.max(1, a.length)) || 0) ^ (b.charCodeAt(index % Math.max(1, b.length)) || 0);
+  }
+  return difference === 0;
+}
+
+function normalizeOptionalDate_(value) {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  return isNaN(date.getTime()) ? '' : date.toISOString();
 }
 
 function dumpWorkspace_(workspaceId) {
@@ -364,85 +839,93 @@ function saveBatch_(workspaceId, changes) {
   lock.waitLock(20000);
 
   try {
-    const sheet = getDataSheet_();
-    const lastRow = sheet.getLastRow();
-    const existing = lastRow > 1
-      ? sheet.getRange(2, 1, lastRow - 1, INTERNTRACK_HEADERS.length).getValues()
-      : [];
-
-    const newestStampByKey = {};
-    existing.forEach(function(row) {
-      if (String(row[0]) !== workspaceId) return;
-      const key = String(row[1] || '');
-      if (!key) return;
-      const stamp = Date.parse(normalizeDate_(row[5])) || 0;
-      newestStampByKey[key] = Math.max(newestStampByKey[key] || 0, stamp);
-    });
-
-    const accepted = [];
-    let skippedAsStale = 0;
-    changes.forEach(function(change) {
-      const key = sanitizeKey_(change && change.key);
-      const updatedAt = normalizeDate_(change && change.updatedAt);
-      const incomingStamp = Date.parse(updatedAt) || 0;
-      const currentStamp = newestStampByKey[key] || 0;
-
-      if (incomingStamp < currentStamp) {
-        skippedAsStale += 1;
-        return;
-      }
-
-      accepted.push({
-        key: key,
-        deleted: Boolean(change && change.deleted),
-        updatedAt: updatedAt,
-        value: String(change && change.value != null ? change.value : '')
-      });
-      newestStampByKey[key] = incomingStamp;
-    });
-
-    if (!accepted.length) {
-      return { saved: 0, skippedAsStale: skippedAsStale };
-    }
-
-    const changedKeys = {};
-    accepted.forEach(function(change) { changedKeys[change.key] = true; });
-
-    const nextRows = existing.filter(function(row) {
-      return !(String(row[0]) === workspaceId && changedKeys[String(row[1])]);
-    });
-
-    accepted.forEach(function(change) {
-      const value = change.deleted ? '' : change.value;
-      const encodedValue = change.deleted ? '' : encodeValue_(value);
-      const chunks = change.deleted ? [''] : splitChunks_(encodedValue);
-
-      chunks.forEach(function(chunk, index) {
-        nextRows.push([
-          workspaceId,
-          change.key,
-          index,
-          chunk,
-          change.deleted,
-          change.updatedAt,
-          'base64url'
-        ]);
-      });
-    });
-
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, INTERNTRACK_HEADERS.length).clearContent();
-    }
-    if (nextRows.length) {
-      sheet.getRange(2, 1, nextRows.length, INTERNTRACK_HEADERS.length).setValues(nextRows);
-    }
-
-    syncReadableMirrors_(workspaceId, nextRows);
-
-    return { saved: accepted.length, skippedAsStale: skippedAsStale };
+    return saveBatchUnlocked_(workspaceId, changes);
   } finally {
     lock.releaseLock();
   }
+}
+
+function saveBatchUnlocked_(workspaceId, changes) {
+  const sheet = getDataSheet_();
+  const lastRow = sheet.getLastRow();
+  const existing = lastRow > 1
+    ? sheet.getRange(2, 1, lastRow - 1, INTERNTRACK_HEADERS.length).getValues()
+    : [];
+
+  const newestStampByKey = {};
+  existing.forEach(function(row) {
+    if (String(row[0]) !== workspaceId) return;
+    const key = String(row[1] || '');
+    if (!key) return;
+    const stamp = Date.parse(normalizeDate_(row[5])) || 0;
+    newestStampByKey[key] = Math.max(newestStampByKey[key] || 0, stamp);
+  });
+
+  const accepted = [];
+  let skippedAsStale = 0;
+  changes.forEach(function(change) {
+    const key = sanitizeKey_(change && change.key);
+    const updatedAt = normalizeDate_(change && change.updatedAt);
+    const incomingStamp = Date.parse(updatedAt) || 0;
+    const currentStamp = newestStampByKey[key] || 0;
+
+    if (incomingStamp < currentStamp) {
+      skippedAsStale += 1;
+      return;
+    }
+
+    accepted.push({
+      key: key,
+      deleted: Boolean(change && change.deleted),
+      updatedAt: updatedAt,
+      value: String(change && change.value != null ? change.value : '')
+    });
+    newestStampByKey[key] = incomingStamp;
+  });
+
+  if (!accepted.length) {
+    return { saved: 0, skippedAsStale: skippedAsStale, savedKeys: [] };
+  }
+
+  const changedKeys = {};
+  accepted.forEach(function(change) { changedKeys[change.key] = true; });
+
+  const nextRows = existing.filter(function(row) {
+    return !(String(row[0]) === workspaceId && changedKeys[String(row[1])]);
+  });
+
+  accepted.forEach(function(change) {
+    const value = change.deleted ? '' : change.value;
+    const encodedValue = change.deleted ? '' : encodeValue_(value);
+    const chunks = change.deleted ? [''] : splitChunks_(encodedValue);
+
+    chunks.forEach(function(chunk, index) {
+      nextRows.push([
+        workspaceId,
+        change.key,
+        index,
+        chunk,
+        change.deleted,
+        change.updatedAt,
+        'base64url'
+      ]);
+    });
+  });
+
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, INTERNTRACK_HEADERS.length).clearContent();
+  }
+  if (nextRows.length) {
+    sheet.getRange(2, 1, nextRows.length, INTERNTRACK_HEADERS.length).setValues(nextRows);
+  }
+
+  syncReadableMirrors_(workspaceId, nextRows);
+
+  return {
+    saved: accepted.length,
+    skippedAsStale: skippedAsStale,
+    savedKeys: accepted.map(function(change) { return change.key; })
+  };
 }
 
 function rebuildAllReadableMirrors_() {
@@ -763,6 +1246,14 @@ function getHolidaysSheet_() {
   let sheet = spreadsheet.getSheetByName(INTERNTRACK_HOLIDAYS_SHEET_NAME);
   if (!sheet) sheet = spreadsheet.insertSheet(INTERNTRACK_HOLIDAYS_SHEET_NAME);
   ensureHeaders_(sheet, INTERNTRACK_HOLIDAYS_HEADERS);
+  return sheet;
+}
+
+function getAuthSheet_() {
+  const spreadsheet = getSpreadsheet_();
+  let sheet = spreadsheet.getSheetByName(INTERNTRACK_AUTH_SHEET_NAME);
+  if (!sheet) sheet = spreadsheet.insertSheet(INTERNTRACK_AUTH_SHEET_NAME);
+  ensureHeaders_(sheet, INTERNTRACK_AUTH_HEADERS);
   return sheet;
 }
 
