@@ -25,6 +25,7 @@ type AuthResult = {
   pending?: boolean;
   code?: string;
   error?: string;
+  userId?: string;
   sessionToken?: string;
   sessionExpiresAt?: string;
   attemptsRemaining?: number | null;
@@ -33,6 +34,7 @@ type AuthResult = {
 
 type PublicProfile = {
   id: string;
+  username: string;
   name: string;
   firstName: string;
   role: string;
@@ -71,6 +73,32 @@ function safeParse<T>(value: string | null, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function assignProfileUsernames(profiles: PublicProfile[]): PublicProfile[] {
+  const used = new Set<string>();
+  return profiles.map((profile) => {
+    let username = String(profile.username || "").trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(username) || used.has(username)) {
+      const normalizedName = String(profile.name || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+      const base = normalizedName.replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "").slice(0, 30) || "intern";
+      username = base.length >= 3 ? base : "intern";
+      let suffix = 2;
+      while (used.has(username)) {
+        const suffixText = String(suffix++);
+        username = base.slice(0, 30 - suffixText.length) + suffixText;
+      }
+    }
+    used.add(username);
+    return { ...profile, username };
+  });
+}
+
+function normalizeUsersValue(value: string): string {
+  return JSON.stringify(assignProfileUsernames(safeParse<PublicProfile[]>(value, [])));
 }
 
 function isoNow(): string {
@@ -166,15 +194,33 @@ class GoogleSheetsStorage {
     return this.bootstrapPromise;
   }
 
-  async unlockProfile(userId: string, pin: string, claimPin: boolean): Promise<void> {
+  async unlockProfile(username: string, pin: string, claimPin: boolean): Promise<string> {
     this.requireConfigured();
-    const result = await this.postAuthAction({
-      action: claimPin ? "claim_pin" : "verify_pin",
-      workspaceId: config().workspaceId,
-      userId,
-      pin,
-    });
+    const profiles = safeParse<PublicProfile[]>(this.memory.get("it_users") || null, []);
+    const matchedProfile = profiles.find((profile) => profile.username?.toLowerCase() === username.toLowerCase());
+    let result: AuthResult;
+    try {
+      result = await this.postAuthAction({
+        action: claimPin ? "claim_pin" : "verify_pin",
+        workspaceId: config().workspaceId,
+        username,
+        pin,
+      });
+    } catch (error) {
+      // Allows the previous PIN backend to keep working while the username-aware
+      // Apps Script version is being deployed. The new backend never needs this.
+      if (!(error instanceof PinAuthError) || error.code !== "INVALID_PROFILE" || !matchedProfile) throw error;
+      result = await this.postAuthAction({
+        action: claimPin ? "claim_pin" : "verify_pin",
+        workspaceId: config().workspaceId,
+        userId: matchedProfile.id,
+        pin,
+      });
+    }
+    const userId = result.userId || matchedProfile?.id;
+    if (!userId) throw new PinAuthError("The backend did not identify this username.", "SESSION_ERROR");
     await this.activateSession(userId, result);
+    return userId;
   }
 
   async registerProfile(profile: PublicProfile, pin: string): Promise<void> {
@@ -288,7 +334,8 @@ class GoogleSheetsStorage {
     this.pending.clear();
     Object.entries(remote).forEach(([key, record]) => {
       if (!isSyncKey(key) || record.deleted) return;
-      this.memory.set(key, record.value || "");
+      const value = key === "it_users" ? normalizeUsersValue(record.value || "[]") : record.value || "";
+      this.memory.set(key, value);
     });
   }
 
@@ -302,7 +349,7 @@ class GoogleSheetsStorage {
       if (!isSyncKey(key)) return;
       remoteKeys.add(key);
       const previous = this.memory.get(key) ?? null;
-      const next = record.deleted ? null : record.value || "";
+      const next = record.deleted ? null : key === "it_users" ? normalizeUsersValue(record.value || "[]") : record.value || "";
 
       if (record.deleted) this.memory.delete(key);
       else this.memory.set(key, next || "");
@@ -374,7 +421,7 @@ class GoogleSheetsStorage {
     const payload = await this.fetchJsonp<{ ok?: boolean; profiles?: PublicProfile[]; code?: string; error?: string }>("profiles", {
       workspaceId: config().workspaceId,
     });
-    return Array.isArray(payload.profiles) ? payload.profiles : [];
+    return Array.isArray(payload.profiles) ? assignProfileUsernames(payload.profiles) : [];
   }
 
   private async fetchRemoteDump(): Promise<Record<string, RemoteRecord>> {
@@ -533,7 +580,7 @@ class GoogleSheetsStorage {
           const ownSubmitted = submitted.find((profile) => profile.id === this.activeUserId);
           const ownReturned = returned.find((profile) => profile.id === this.activeUserId);
           return JSON.stringify(ownSubmitted || null) === JSON.stringify(ownReturned ? { ...ownReturned, hasPin: undefined } : null)
-            || ownSubmitted?.id === ownReturned?.id && ownSubmitted?.name === ownReturned?.name && ownSubmitted?.role === ownReturned?.role && ownSubmitted?.department === ownReturned?.department;
+            || ownSubmitted?.id === ownReturned?.id && ownSubmitted?.username === ownReturned?.username && ownSubmitted?.name === ownReturned?.name && ownSubmitted?.role === ownReturned?.role && ownSubmitted?.department === ownReturned?.department;
         }
         return record.deleted !== true && (record.value || "") === (change.value || "");
       });
