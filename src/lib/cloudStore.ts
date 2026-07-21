@@ -20,6 +20,28 @@ type RuntimeConfig = {
 
 type StorageListener = (changedKeys: string[]) => void;
 
+type AuthResult = {
+  ok?: boolean;
+  pending?: boolean;
+  code?: string;
+  error?: string;
+  sessionToken?: string;
+  sessionExpiresAt?: string;
+  attemptsRemaining?: number | null;
+  lockedUntil?: string | null;
+};
+
+type PublicProfile = {
+  id: string;
+  name: string;
+  firstName: string;
+  role: string;
+  department: string;
+  initials: string;
+  startDate: string;
+  hasPin?: boolean;
+};
+
 declare global {
   interface Window {
     INTERNTRACK_CONFIG?: RuntimeConfig;
@@ -27,6 +49,20 @@ declare global {
 }
 
 const DATA_PREFIX = "it_";
+
+export class PinAuthError extends Error {
+  code: string;
+  attemptsRemaining: number | null;
+  lockedUntil: string | null;
+
+  constructor(message: string, code = "AUTH_ERROR", attemptsRemaining: number | null = null, lockedUntil: string | null = null) {
+    super(message);
+    this.name = "PinAuthError";
+    this.code = code;
+    this.attemptsRemaining = attemptsRemaining;
+    this.lockedUntil = lockedUntil;
+  }
+}
 
 function safeParse<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
@@ -65,11 +101,12 @@ function apiIsConfigured(): boolean {
 }
 
 /**
- * Google Sheets-only state adapter.
+ * Google Sheets-only state adapter with PIN-gated, per-profile access.
  *
- * Data is held in memory only while the page is open. Nothing is written to
- * localStorage, sessionStorage, IndexedDB, cookies, or any other browser-side
- * persistence. Google Sheets is the sole persistent source of truth.
+ * Before authentication, only the public profile picker is held in memory.
+ * A successful backend PIN check creates a temporary server session and loads
+ * only the authenticated profile's records. The token and data are never
+ * persisted in localStorage, sessionStorage, IndexedDB, or cookies.
  */
 class GoogleSheetsStorage {
   private memory = new Map<string, string>();
@@ -79,6 +116,9 @@ class GoogleSheetsStorage {
   private bootstrapPromise: Promise<void> | null = null;
   private refreshPromise: Promise<string[]> | null = null;
   private listeners = new Set<StorageListener>();
+  private sessionToken: string | null = null;
+  private activeUserId: string | null = null;
+  private sessionExpiresAt: string | null = null;
 
   getItem(key: string): string | null {
     return this.memory.get(key) ?? null;
@@ -88,7 +128,7 @@ class GoogleSheetsStorage {
     const normalized = String(value);
     const previous = this.memory.get(key);
     this.memory.set(key, normalized);
-    if (!isSyncKey(key) || previous === normalized) return;
+    if (!isSyncKey(key) || previous === normalized || !this.sessionToken) return;
 
     this.pending.set(key, {
       key,
@@ -102,7 +142,7 @@ class GoogleSheetsStorage {
   removeItem(key: string): void {
     const existed = this.memory.has(key);
     this.memory.delete(key);
-    if (!isSyncKey(key) || !existed) return;
+    if (!isSyncKey(key) || !existed || !this.sessionToken) return;
 
     this.pending.set(key, {
       key,
@@ -126,8 +166,51 @@ class GoogleSheetsStorage {
     return this.bootstrapPromise;
   }
 
+  async unlockProfile(userId: string, pin: string, claimPin: boolean): Promise<void> {
+    this.requireConfigured();
+    const result = await this.postAuthAction({
+      action: claimPin ? "claim_pin" : "verify_pin",
+      workspaceId: config().workspaceId,
+      userId,
+      pin,
+    });
+    await this.activateSession(userId, result);
+  }
+
+  async registerProfile(profile: PublicProfile, pin: string): Promise<void> {
+    this.requireConfigured();
+    const result = await this.postAuthAction({
+      action: "register_profile",
+      workspaceId: config().workspaceId,
+      sessionToken: this.sessionToken,
+      profile,
+      pin,
+    });
+    await this.activateSession(profile.id, result);
+  }
+
+  async signOut(): Promise<void> {
+    const token = this.sessionToken;
+    try {
+      if (token) {
+        await this.postAuthAction({
+          action: "sign_out",
+          workspaceId: config().workspaceId,
+          sessionToken: token,
+        });
+      }
+    } catch (error) {
+      console.warn("InternTrack could not revoke the server session; local access was still cleared.", error);
+    } finally {
+      this.clearSession();
+      await this.bootstrapInternal();
+      this.notify(["it_users"]);
+    }
+  }
+
   async refresh(): Promise<string[]> {
     this.requireConfigured();
+    this.requireAuthenticated();
     if (this.refreshPromise) return this.refreshPromise;
 
     this.refreshPromise = this.refreshInternal().finally(() => {
@@ -138,6 +221,7 @@ class GoogleSheetsStorage {
 
   async syncNow(): Promise<void> {
     this.requireConfigured();
+    this.requireAuthenticated();
     if (this.flushTimer !== null) {
       window.clearTimeout(this.flushTimer);
       this.flushTimer = null;
@@ -151,17 +235,57 @@ class GoogleSheetsStorage {
     return apiIsConfigured();
   }
 
+  isAuthenticated(): boolean {
+    return Boolean(this.sessionToken && this.activeUserId);
+  }
+
   private requireConfigured(): void {
     if (!apiIsConfigured()) {
       throw new Error("Google Sheets is not configured. Add the Apps Script /exec URL in config.js.");
     }
   }
 
+  private requireAuthenticated(): void {
+    if (!this.sessionToken || !this.activeUserId) {
+      throw new PinAuthError("Enter your PIN to continue.", "SESSION_REQUIRED");
+    }
+  }
+
   private async bootstrapInternal(): Promise<void> {
     this.requireConfigured();
-    const remote = await this.fetchRemoteDump();
+    const profiles = await this.fetchProfiles();
     this.memory.clear();
+    this.pending.clear();
+    this.memory.set("it_users", JSON.stringify(profiles));
+  }
 
+  private async activateSession(userId: string, result: AuthResult): Promise<void> {
+    if (!result.sessionToken) throw new PinAuthError("The backend did not create a secure session.", "SESSION_ERROR");
+    this.sessionToken = result.sessionToken;
+    this.activeUserId = userId;
+    this.sessionExpiresAt = result.sessionExpiresAt || null;
+    try {
+      const remote = await this.fetchRemoteDump();
+      this.replaceMemory(remote);
+    } catch (error) {
+      this.clearSession();
+      throw error;
+    }
+  }
+
+  private clearSession(): void {
+    if (this.flushTimer !== null) window.clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    this.sessionToken = null;
+    this.activeUserId = null;
+    this.sessionExpiresAt = null;
+    this.pending.clear();
+    this.memory.clear();
+  }
+
+  private replaceMemory(remote: Record<string, RemoteRecord>): void {
+    this.memory.clear();
+    this.pending.clear();
     Object.entries(remote).forEach(([key, record]) => {
       if (!isSyncKey(key) || record.deleted) return;
       this.memory.set(key, record.value || "");
@@ -169,7 +293,6 @@ class GoogleSheetsStorage {
   }
 
   private async refreshInternal(): Promise<string[]> {
-    // Finish this page's writes before replacing its in-memory view.
     await this.syncNow();
     const remote = await this.fetchRemoteDump();
     const changedKeys: string[] = [];
@@ -187,8 +310,6 @@ class GoogleSheetsStorage {
       if (previous !== next) changedKeys.push(key);
     });
 
-    // The backend normally retains tombstones, but also remove any in-memory
-    // key that is no longer represented remotely.
     [...this.memory.keys()].forEach((key) => {
       if (isSyncKey(key) && !remoteKeys.has(key) && !this.pending.has(key)) {
         this.memory.delete(key);
@@ -201,19 +322,20 @@ class GoogleSheetsStorage {
   }
 
   private scheduleFlush(delay = 40): void {
-    if (!apiIsConfigured()) return;
+    if (!apiIsConfigured() || !this.sessionToken) return;
     if (this.flushTimer !== null) window.clearTimeout(this.flushTimer);
     this.flushTimer = window.setTimeout(() => {
       this.flushTimer = null;
       void this.flush().catch((error) => {
         console.error("InternTrack: Google Sheets write failed; retrying while this page remains open.", error);
-        this.scheduleFlush(2000);
+        if (!(error instanceof PinAuthError) || !error.code.startsWith("SESSION_")) this.scheduleFlush(2000);
       });
     }, delay);
   }
 
   private async flush(): Promise<void> {
     this.requireConfigured();
+    this.requireAuthenticated();
     if (this.flushPromise) return this.flushPromise;
 
     this.flushPromise = this.flushInternal().finally(() => {
@@ -234,7 +356,6 @@ class GoogleSheetsStorage {
       }
     }
 
-    // A change may have arrived while the previous request was running.
     if (this.pending.size) this.scheduleFlush(40);
   }
 
@@ -249,7 +370,30 @@ class GoogleSheetsStorage {
     });
   }
 
-  private fetchRemoteDump(): Promise<Record<string, RemoteRecord>> {
+  private async fetchProfiles(): Promise<PublicProfile[]> {
+    const payload = await this.fetchJsonp<{ ok?: boolean; profiles?: PublicProfile[]; code?: string; error?: string }>("profiles", {
+      workspaceId: config().workspaceId,
+    });
+    return Array.isArray(payload.profiles) ? payload.profiles : [];
+  }
+
+  private async fetchRemoteDump(): Promise<Record<string, RemoteRecord>> {
+    this.requireAuthenticated();
+    const payload = await this.fetchJsonp<{
+      ok?: boolean;
+      data?: Record<string, RemoteRecord>;
+      sessionExpiresAt?: string;
+      code?: string;
+      error?: string;
+    }>("dump", {
+      workspaceId: config().workspaceId,
+      sessionToken: this.sessionToken!,
+    });
+    this.sessionExpiresAt = payload.sessionExpiresAt || this.sessionExpiresAt;
+    return payload.data || {};
+  }
+
+  private fetchJsonp<T extends { ok?: boolean; code?: string; error?: string }>(action: string, parameters: Record<string, string>): Promise<T> {
     const cfg = config();
     const callbackName = `__internTrackJsonp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
@@ -266,17 +410,19 @@ class GoogleSheetsStorage {
         delete (window as unknown as Record<string, unknown>)[callbackName];
       };
 
-      (window as unknown as Record<string, unknown>)[callbackName] = (payload: {
-        ok?: boolean;
-        data?: Record<string, RemoteRecord>;
-        error?: string;
-      }) => {
+      (window as unknown as Record<string, unknown>)[callbackName] = (payload: T) => {
         cleanup();
         if (!payload?.ok) {
-          reject(new Error(payload?.error || "Google Sheets returned an error."));
+          const authPayload = payload as T & AuthResult;
+          reject(new PinAuthError(
+            payload?.error || "Google Sheets returned an error.",
+            payload?.code || "REQUEST_ERROR",
+            authPayload.attemptsRemaining ?? null,
+            authPayload.lockedUntil ?? null,
+          ));
           return;
         }
-        resolve(payload.data || {});
+        resolve(payload);
       };
 
       script.onerror = () => {
@@ -285,8 +431,8 @@ class GoogleSheetsStorage {
       };
 
       const url = new URL(cfg.apiUrl!);
-      url.searchParams.set("action", "dump");
-      url.searchParams.set("workspaceId", cfg.workspaceId);
+      url.searchParams.set("action", action);
+      Object.entries(parameters).forEach(([key, value]) => url.searchParams.set(key, value));
       url.searchParams.set("callback", callbackName);
       url.searchParams.set("_", String(Date.now()));
       script.src = url.toString();
@@ -294,11 +440,47 @@ class GoogleSheetsStorage {
     });
   }
 
+  private async postAuthAction(body: Record<string, unknown>): Promise<AuthResult> {
+    const cfg = config();
+    const requestId = this.newRequestId();
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), cfg.requestTimeoutMs);
+    try {
+      await fetch(cfg.apiUrl!, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ ...body, requestId }),
+        mode: "no-cors",
+        redirect: "follow",
+        signal: controller.signal,
+      });
+    } finally {
+      window.clearTimeout(timeout);
+    }
+
+    const delays = [0, 100, 180, 320, 560, 900, 1400];
+    for (const delay of delays) {
+      if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+      const result = await this.fetchJsonp<AuthResult>("auth_result", { requestId });
+      if (!result.pending) return result;
+    }
+    throw new Error("The authentication request timed out. Please try again.");
+  }
+
+  private newRequestId(): string {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+  }
+
   private async postBatch(changes: SyncChange[]): Promise<void> {
+    this.requireAuthenticated();
     const cfg = config();
     const body = JSON.stringify({
       action: "batch",
       workspaceId: cfg.workspaceId,
+      sessionToken: this.sessionToken,
       changes,
     });
 
@@ -314,14 +496,12 @@ class GoogleSheetsStorage {
           signal: controller.signal,
         });
         const text = await response.text();
-        const payload = safeParse<{ ok?: boolean; error?: string }>(text, {});
+        const payload = safeParse<{ ok?: boolean; code?: string; error?: string }>(text, {});
         if (!response.ok || payload.ok !== true) {
-          throw new Error(payload.error || `Google Sheets write failed (${response.status}).`);
+          throw new PinAuthError(payload.error || `Google Sheets write failed (${response.status}).`, payload.code || "WRITE_ERROR");
         }
       } catch (error) {
-        if (controller.signal.aborted) throw error;
-        // Apps Script deployments can omit CORS headers. An opaque POST still
-        // reaches doPost; the JSONP read below verifies that Sheets committed it.
+        if (controller.signal.aborted || error instanceof PinAuthError) throw error;
         await fetch(cfg.apiUrl!, {
           method: "POST",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -347,6 +527,14 @@ class GoogleSheetsStorage {
         const record = remote[change.key];
         if (!record) return false;
         if (change.deleted) return record.deleted === true;
+        if (change.key === "it_users") {
+          const submitted = safeParse<PublicProfile[]>(change.value, []);
+          const returned = safeParse<PublicProfile[]>(record.value || null, []);
+          const ownSubmitted = submitted.find((profile) => profile.id === this.activeUserId);
+          const ownReturned = returned.find((profile) => profile.id === this.activeUserId);
+          return JSON.stringify(ownSubmitted || null) === JSON.stringify(ownReturned ? { ...ownReturned, hasPin: undefined } : null)
+            || ownSubmitted?.id === ownReturned?.id && ownSubmitted?.name === ownReturned?.name && ownSubmitted?.role === ownReturned?.role && ownSubmitted?.department === ownReturned?.department;
+        }
         return record.deleted !== true && (record.value || "") === (change.value || "");
       });
       if (confirmed) return;

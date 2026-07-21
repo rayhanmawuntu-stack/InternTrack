@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { STORE } from "../lib/cloudStore";
+import { PinAuthError } from "../lib/cloudStore";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import {
@@ -16,6 +17,7 @@ import {
 type User = {
   id: string; name: string; firstName: string;
   role: string; department: string; initials: string; startDate: string;
+  hasPin?: boolean;
 };
 type ActivityEntry = {
   id: string; title: string; description: string; time: string; // ISO string
@@ -88,16 +90,19 @@ const G = {
 function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
   const [step, setStep]       = useState<"welcome"|"register">("welcome");
   const [leaving, setLeaving] = useState(false);
-  const [form, setForm]       = useState({ name:"", role:"", department:"" });
+  const [form, setForm]       = useState({ name:"", role:"", department:"", pin:"", confirmPin:"" });
   const [errors, setErrors]   = useState<Record<string,string>>({});
+  const [submitting, setSubmitting] = useState(false);
 
   function startLeave(cb: () => void) { setLeaving(true); setTimeout(cb, 650); }
 
-  function submit() {
+  async function submit() {
     const e: Record<string,string> = {};
     if (!form.name.trim()) e.name = "Full name is required";
     if (!form.role.trim()) e.role = "Intern role is required";
     if (!form.department.trim()) e.department = "Department is required";
+    if (!/^\d{6}$/.test(form.pin)) e.pin = "Use exactly 6 digits";
+    if (form.confirmPin !== form.pin) e.confirmPin = "PINs do not match";
     if (Object.keys(e).length) { setErrors(e); return; }
     const firstName = form.name.trim().split(" ")[0];
     const user: User = {
@@ -105,16 +110,22 @@ function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
       role: form.role.trim(), department: form.department.trim(),
       initials: initials(form.name),
       startDate: localDateKey(new Date()),
+      hasPin: true,
     };
-    const users = LS.users();
-    users.push(user);
-    LS.saveUsers(users);
-    void STORE.syncNow();
-    startLeave(() => onCreated(user));
+    setSubmitting(true);
+    setErrors({});
+    try {
+      await STORE.registerProfile(user, form.pin);
+      const hydratedUser = LS.users().find(entry => entry.id === user.id) || user;
+      startLeave(() => onCreated(hydratedUser));
+    } catch (error) {
+      setErrors({ submit:error instanceof Error ? error.message : "Unable to create this profile." });
+      setSubmitting(false);
+    }
   }
 
   return (
-    <div className="it-onboarding-screen min-h-screen flex flex-col items-center justify-end pb-14 relative overflow-hidden"
+    <div className="it-onboarding-screen min-h-[100dvh] flex flex-col items-center justify-center py-8 relative overflow-x-hidden overflow-y-auto"
       style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", background:"#0c0c0e",
         opacity: leaving ? 0 : 1,
         transform: leaving ? "scale(1.06)" : "scale(1)",
@@ -220,15 +231,51 @@ function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
               />
               {errors.department && <p className="text-[11px] mt-1" style={{ color:"#fb7185" }}>{errors.department}</p>}
             </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color:"rgba(255,255,255,0.4)" }}>6-digit PIN</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  maxLength={6}
+                  value={form.pin}
+                  onChange={e => { setForm(p => ({...p, pin:e.target.value.replace(/\D/g, "").slice(0,6)})); setErrors(p => ({...p, pin:"", submit:""})); }}
+                  placeholder="••••••"
+                  className="w-full px-4 py-3 rounded-2xl text-sm text-white text-center tracking-[0.35em] outline-none transition-all placeholder:text-white/20"
+                  style={{ background:"rgba(255,255,255,0.08)", border: errors.pin ? "1px solid rgba(251,113,133,0.8)" : "1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}
+                />
+                {errors.pin && <p className="text-[11px] mt-1" style={{ color:"#fb7185" }}>{errors.pin}</p>}
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color:"rgba(255,255,255,0.4)" }}>Confirm PIN</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  maxLength={6}
+                  value={form.confirmPin}
+                  onChange={e => { setForm(p => ({...p, confirmPin:e.target.value.replace(/\D/g, "").slice(0,6)})); setErrors(p => ({...p, confirmPin:"", submit:""})); }}
+                  onKeyDown={e => e.key === "Enter" && void submit()}
+                  placeholder="••••••"
+                  className="w-full px-4 py-3 rounded-2xl text-sm text-white text-center tracking-[0.35em] outline-none transition-all placeholder:text-white/20"
+                  style={{ background:"rgba(255,255,255,0.08)", border: errors.confirmPin ? "1px solid rgba(251,113,133,0.8)" : "1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}
+                />
+                {errors.confirmPin && <p className="text-[11px] mt-1" style={{ color:"#fb7185" }}>{errors.confirmPin}</p>}
+              </div>
+            </div>
           </div>
 
-          <button onClick={submit}
-            className="w-full py-3.5 rounded-full font-bold text-sm text-[#0c0c0e] mb-4 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          {errors.submit && <p className="w-full text-[11px] text-center mb-3" style={{ color:"#fb7185" }}>{errors.submit}</p>}
+
+          <button onClick={() => void submit()} disabled={submitting}
+            className="w-full py-3.5 rounded-full font-bold text-sm text-[#0c0c0e] mb-4 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60 disabled:scale-100"
             style={{ background:"#ffffff", boxShadow:"0 4px 24px rgba(255,255,255,0.18)" }}>
-            Create Profile
+            {submitting ? "Securing profile…" : "Create Profile"}
           </button>
 
-          <button onClick={() => { setStep("welcome"); setErrors({}); }}
+          <button onClick={() => { setStep("welcome"); setErrors({}); }} disabled={submitting}
             className="text-xs" style={{ color:"rgba(255,255,255,0.35)" }}>
             ← Back
           </button>
@@ -251,11 +298,43 @@ function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
 function SignInScreen({ users, onSelect, onAddNew }: { users: User[]; onSelect: (u: User) => void; onAddNew: () => void }) {
   const [leaving, setLeaving]   = useState(false);
   const [selected, setSelected] = useState<User>(users[0]);
+  const [pin, setPin] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  function enter() { setLeaving(true); setTimeout(() => onSelect(selected), 650); }
+  useEffect(() => {
+    setPin("");
+    setAuthError("");
+  }, [selected?.id]);
+
+  async function enter() {
+    if (!selected || !/^\d{6}$/.test(pin)) {
+      setAuthError("Enter your 6-digit PIN.");
+      return;
+    }
+    setSubmitting(true);
+    setAuthError("");
+    try {
+      await STORE.unlockProfile(selected.id, pin, !selected.hasPin);
+      const hydratedUser = LS.users().find(user => user.id === selected.id) || selected;
+      setLeaving(true);
+      setTimeout(() => onSelect(hydratedUser), 650);
+    } catch (error) {
+      if (error instanceof PinAuthError) {
+        if (error.lockedUntil) {
+          const unlockTime = new Date(error.lockedUntil).toLocaleTimeString("en-US", { hour:"2-digit", minute:"2-digit" });
+          setAuthError(`${error.message} Available again at ${unlockTime}.`);
+        } else if (error.attemptsRemaining != null) {
+          setAuthError(`${error.message} ${error.attemptsRemaining} attempt${error.attemptsRemaining === 1 ? "" : "s"} remaining.`);
+        } else setAuthError(error.message);
+      } else setAuthError(error instanceof Error ? error.message : "Unable to verify this PIN.");
+      setPin("");
+      setSubmitting(false);
+    }
+  }
 
   return (
-    <div className="it-signin-screen min-h-screen flex flex-col items-center justify-end pb-14 relative overflow-hidden"
+    <div className="it-signin-screen min-h-[100dvh] flex flex-col items-center justify-center py-8 relative overflow-x-hidden overflow-y-auto"
       style={{ fontFamily:"'Plus Jakarta Sans',sans-serif", background:"#0c0c0e",
         opacity: leaving ? 0 : 1,
         transform: leaving ? "scale(1.06)" : "scale(1)",
@@ -305,13 +384,42 @@ function SignInScreen({ users, onSelect, onAddNew }: { users: User[]; onSelect: 
           })}
         </div>
 
-        <button onClick={enter}
-          className="w-full py-3.5 rounded-full font-bold text-sm text-[#0c0c0e] mb-3 transition-all hover:scale-[1.02] active:scale-[0.98]"
+        <div className="w-full mb-4">
+          <div className="flex items-center justify-between mb-1.5 px-1">
+            <label className="text-[10px] font-semibold uppercase tracking-widest" style={{ color:"rgba(255,255,255,0.42)" }}>
+              {selected?.hasPin ? "Security PIN" : "Create security PIN"}
+            </label>
+            {!selected?.hasPin && <span className="text-[9px]" style={{ color:"rgba(255,255,255,0.32)" }}>First secure sign-in</span>}
+          </div>
+          <input
+            autoFocus
+            type="password"
+            inputMode="numeric"
+            autoComplete="current-password"
+            maxLength={6}
+            value={pin}
+            onChange={event => { setPin(event.target.value.replace(/\D/g, "").slice(0, 6)); setAuthError(""); }}
+            onKeyDown={event => event.key === "Enter" && void enter()}
+            placeholder="••••••"
+            aria-label={selected?.hasPin ? "Enter 6-digit PIN" : "Create a 6-digit PIN"}
+            className="w-full px-4 py-3.5 rounded-2xl text-center text-base text-white tracking-[0.55em] outline-none transition-all placeholder:text-white/20"
+            style={{ background:"rgba(255,255,255,0.08)", border:authError ? "1px solid rgba(251,113,133,0.75)" : "1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}
+          />
+          {authError && <p role="alert" className="text-[11px] mt-1.5 px-1 leading-4" style={{ color:"#fb7185" }}>{authError}</p>}
+          {!selected?.hasPin && !authError && (
+            <p className="text-[10px] mt-1.5 px-1 leading-4" style={{ color:"rgba(255,255,255,0.34)" }}>
+              This existing profile has no PIN yet. The PIN you enter now will become its PIN.
+            </p>
+          )}
+        </div>
+
+        <button onClick={() => void enter()} disabled={submitting || pin.length !== 6}
+          className="w-full py-3.5 rounded-full font-bold text-sm text-[#0c0c0e] mb-3 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:scale-100"
           style={{ background:"#ffffff", boxShadow:"0 4px 24px rgba(255,255,255,0.18)" }}>
-          Enter Dashboard
+          {submitting ? "Verifying…" : selected?.hasPin ? "Verify & Enter" : "Set PIN & Enter"}
         </button>
 
-        <button onClick={onAddNew}
+        <button onClick={onAddNew} disabled={submitting}
           className="flex items-center gap-1.5 text-xs transition-colors hover:opacity-80"
           style={{ color:"rgba(255,255,255,0.4)" }}>
           <UserPlus size={13} /> Add new profile
@@ -373,6 +481,15 @@ function InternTrackApp() {
       : 0);
   }
 
+  async function secureSignOut() {
+    await STORE.signOut();
+    setUser(null);
+    setAddingNew(false);
+    setInternOpen(false);
+    setNavTab("dashboard");
+    setScreen(LS.users().length ? "signin" : "onboard");
+  }
+
   // Load per-user data and restore today's shared clock session.
   useEffect(() => {
     if (!user) return;
@@ -410,7 +527,13 @@ function InternTrackApp() {
     });
 
     const refreshCloud = () => {
-      if (document.visibilityState === "visible") void STORE.refresh();
+      if (document.visibilityState === "visible") {
+        void STORE.refresh().catch(error => {
+          if (error instanceof PinAuthError && error.code.startsWith("SESSION_")) {
+            void secureSignOut();
+          } else console.error("Cloud refresh failed.", error);
+        });
+      }
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refreshCloud();
@@ -668,7 +791,7 @@ function InternTrackApp() {
 
         {/* Tab content */}
         {navTab === "attendance" && <AttendanceView user={user} now={now} cloudRevision={cloudRevision} />}
-        {navTab === "settings"   && <SettingsView user={user} workHours={workHours} onWorkHoursChange={(h) => { setWorkHours(h); LS.saveWorkHours(user.id, h); }} onUserChange={(u) => { setUser(u); const users = LS.users().map(x => x.id === u.id ? u : x); LS.saveUsers(users); }} onSignOut={() => setScreen("signin")} />}
+        {navTab === "settings"   && <SettingsView user={user} workHours={workHours} onWorkHoursChange={(h) => { setWorkHours(h); LS.saveWorkHours(user.id, h); }} onUserChange={(u) => { setUser(u); const users = LS.users().map(x => x.id === u.id ? u : x); LS.saveUsers(users); }} onSignOut={secureSignOut} />}
         {navTab === "reports"    && <ReportsView user={user} activities={activities} attRecords={LS.att(user.id)} />}
         {navTab === "calendar"   && <CalendarView user={user} now={now} cloudRevision={cloudRevision} />}
         {navTab === "notes"      && <NotesView user={user} now={now} />}
@@ -2453,7 +2576,7 @@ function ReportsView({ user, activities, attRecords }: { user:User; activities:A
 /* ─── Settings View ──────────────────────────────────────── */
 function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSignOut }: {
   user:User; workHours:number; onWorkHoursChange:(h:number)=>void;
-  onUserChange:(u:User)=>void; onSignOut:()=>void;
+  onUserChange:(u:User)=>void; onSignOut:()=>void | Promise<void>;
 }) {
   const storedSettings = LS.settings(user.id) || {};
   const [form, setForm]       = useState({
@@ -2489,7 +2612,7 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
     void STORE.syncNow();
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
-  function deleteProfile() {
+  async function deleteProfile() {
     const users = LS.users().filter(u => u.id !== user.id);
     LS.saveUsers(users);
     STORE.removeItem(`it_act_${user.id}`);
@@ -2499,8 +2622,8 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
     STORE.removeItem(`it_notesv2_${user.id}`);
     STORE.removeItem(`it_cal_${user.id}`);
     STORE.removeItem(`it_settings_${user.id}`);
-    void STORE.syncNow();
-    onSignOut();
+    await STORE.syncNow();
+    await onSignOut();
   }
 
   const inputCls = "w-full px-3.5 py-2.5 rounded-xl text-sm text-[#3d0a20] outline-none transition-all placeholder:text-pink-200";
@@ -2629,7 +2752,7 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
           <Trash2 size={13} /> Delete Profile
         </button>
         <div className="it-settings-save-group flex gap-2">
-          <button onClick={onSignOut} className="px-5 py-2.5 rounded-xl text-sm font-semibold transition-all" style={{ background:"rgba(255,255,255,0.22)", color:"rgba(61,10,32,0.55)", border:"1px solid rgba(255,255,255,0.38)" }}>
+          <button onClick={() => void onSignOut()} className="px-5 py-2.5 rounded-xl text-sm font-semibold transition-all" style={{ background:"rgba(255,255,255,0.22)", color:"rgba(61,10,32,0.55)", border:"1px solid rgba(255,255,255,0.38)" }}>
             Sign Out
           </button>
           <button onClick={save} className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:scale-105"
@@ -2645,7 +2768,7 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
           <p className="text-xs mb-4" style={{ color:"rgba(61,10,32,0.55)" }}>This will permanently remove {user.firstName}'s profile and all associated data. This cannot be undone.</p>
           <div className="flex gap-2">
             <button onClick={() => setShowDanger(false)} className="flex-1 py-2 rounded-xl text-sm font-semibold transition-all" style={{ background:"rgba(255,255,255,0.3)", color:"rgba(61,10,32,0.6)" }}>Cancel</button>
-            <button onClick={deleteProfile} className="flex-1 py-2 rounded-xl text-sm font-semibold text-white transition-all" style={{ background:"linear-gradient(135deg,#fb7185,#e11d48)" }}>Yes, Delete</button>
+            <button onClick={() => void deleteProfile()} className="flex-1 py-2 rounded-xl text-sm font-semibold text-white transition-all" style={{ background:"linear-gradient(135deg,#fb7185,#e11d48)" }}>Yes, Delete</button>
           </div>
         </div>
       )}
