@@ -10,6 +10,9 @@ This build preserves the original InternTrack interface while making Google Shee
 - Every profile, attendance record, clock session, activity, quick note, full note, calendar event, work-hours setting, profile field, and notification preference is written to Google Sheets.
 - Writes are read back from the Apps Script endpoint to confirm that Sheets committed them.
 - Cross-device refresh when the page regains focus and every 30 seconds while open.
+- Per-profile 6-digit PIN verification enforced by the Apps Script backend.
+- Salted, server-peppered PIN hashes, five-attempt rate limiting, 15-minute lockouts, and temporary six-hour sessions.
+- Pre-authentication requests expose only the profile picker; profile records are loaded only after successful verification.
 - A ready-to-deploy GitHub Pages workflow.
 - A prebuilt static site in `site/`.
 - The Google Apps Script backend in `apps-script/`.
@@ -27,6 +30,7 @@ Because there is no persistent browser copy, the app requires an internet connec
 - `InternTrackNotes` — full notes and tags.
 - `InternTrackCalendar` — calendar events.
 - `InternTrackSettings` — work hours, contact fields, notifications, and the quick note.
+- `InternTrackAuth` — PIN salts, keyed hashes, failed-attempt counters, and lockout timestamps. Plain PINs are never stored.
 
 The readable tabs are mirrors of `InternTrackData`; edit data through the app so the canonical and readable tabs stay aligned.
 
@@ -36,7 +40,7 @@ The readable tabs are mirrors of `InternTrackData`; edit data through the app so
 2. Open **Extensions → Apps Script**.
 3. Replace the existing `Code.gs` with `apps-script/Code.gs` from this project.
 4. In Apps Script, open **Project Settings**, enable the manifest file, and replace `appsscript.json` with `apps-script/appsscript.json` if needed.
-5. Run `setup()` once and approve spreadsheet access. This creates/rebuilds all readable tabs from existing cloud data.
+5. Run `setup()` once and approve spreadsheet access. This creates/rebuilds all readable tabs and the private `InternTrackAuth` tab.
 6. Select **Deploy → Manage deployments**.
 7. Edit the Web app deployment and choose **New version**.
 8. Keep **Execute as** set to **Me** and **Who has access** set to **Anyone**.
@@ -96,9 +100,12 @@ npm run preview
 
 - There is no offline mode.
 - Refreshing or closing the page clears the temporary in-memory view; the next load comes from Google Sheets again.
+- A PIN is required again after a refresh, explicit sign-out, backend cache eviction, or the six-hour session expiry.
+- Existing profiles created before PIN authentication show **Create security PIN** once. The first successful claim secures that profile; deploy the new Apps Script version before publishing the updated frontend.
+- Five consecutive incorrect PIN attempts lock that profile for 15 minutes.
 - If a write cannot be confirmed, the app retries while that page remains open.
 - Use the updated Apps Script backend. The previous backend does not create all readable tabs.
 
 ## Privacy note
 
-The default setup uses an Apps Script Web app that is reachable from a public static site. The deployment URL and workspace ID are visible in frontend files. Do not store confidential or regulated information without adding authentication and access controls.
+The Apps Script deployment URL and workspace ID remain visible because the frontend is public. Access to profile data is enforced with backend PIN sessions, but a six-digit PIN is not a replacement for enterprise identity, audit, or compliance controls. Do not store regulated or highly sensitive information without stronger identity-based authentication.
