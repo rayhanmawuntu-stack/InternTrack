@@ -31,6 +31,7 @@ const INTERNTRACK_HEADERS = [
 const INTERNTRACK_USERS_HEADERS = [
   'workspace_id',
   'user_id',
+  'username',
   'name',
   'first_name',
   'role',
@@ -70,6 +71,8 @@ const INTERNTRACK_HOLIDAY_CALENDAR_IDS = [
   'en.indonesian#holiday@group.v.calendar.google.com'
 ];
 const INTERNTRACK_CHUNK_SIZE = 45000;
+const INTERNTRACK_USERNAME_MIN_LENGTH = 3;
+const INTERNTRACK_USERNAME_MAX_LENGTH = 30;
 const INTERNTRACK_PIN_LENGTH = 6;
 const INTERNTRACK_MAX_PIN_ATTEMPTS = 5;
 const INTERNTRACK_PIN_LOCK_MS = 15 * 60 * 1000;
@@ -136,8 +139,9 @@ function doGet(e) {
       payload = {
         ok: true,
         service: 'InternTrack Google Sheets backend',
-        version: 8,
+        version: 9,
         pinAuthentication: true,
+        usernameAuthentication: true,
         serverTime: new Date().toISOString()
       };
     }
@@ -370,7 +374,8 @@ function handleAuthAction_(action, body) {
     return registerProfile_(workspaceId, body.profile, pin, body.sessionToken);
   }
 
-  const userId = requireUserId_(body.userId);
+  const profile = resolveAuthProfile_(workspaceId, body.username, body.userId);
+  const userId = profile.id;
   if (action === 'claim_pin') {
     return claimPin_(workspaceId, userId, pin);
   }
@@ -381,7 +386,7 @@ function handleAuthAction_(action, body) {
 }
 
 function registerProfile_(workspaceId, rawProfile, pin, sponsorToken) {
-  const profile = sanitizeProfile_(rawProfile);
+  let profile = sanitizeProfile_(rawProfile);
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
 
@@ -391,6 +396,12 @@ function registerProfile_(workspaceId, rawProfile, pin, sponsorToken) {
     if (users.length) requireSession_(workspaceId, sponsorToken);
     if (users.some(function(user) { return String(user.id) === profile.id; })) {
       throw authError_('PROFILE_EXISTS', 'That profile already exists.');
+    }
+    if (!normalizeUsername_(rawProfile && rawProfile.username)) {
+      profile = assignUsernames_(users.concat([profile]))[users.length];
+    }
+    if (users.some(function(user) { return normalizeUsername_(user.username) === profile.username; })) {
+      throw authError_('USERNAME_TAKEN', 'That username is already in use.');
     }
 
     users.push(profile);
@@ -408,6 +419,7 @@ function registerProfile_(workspaceId, rawProfile, pin, sponsorToken) {
     return {
       ok: true,
       profile: publicProfile_(profile, true),
+      userId: profile.id,
       sessionToken: session.token,
       sessionExpiresAt: session.expiresAt
     };
@@ -431,6 +443,7 @@ function claimPin_(workspaceId, userId, pin) {
     return {
       ok: true,
       claimed: true,
+      userId: userId,
       sessionToken: session.token,
       sessionExpiresAt: session.expiresAt
     };
@@ -482,6 +495,7 @@ function verifyPin_(workspaceId, userId, pin) {
     const session = issueSession_(workspaceId, userId);
     return {
       ok: true,
+      userId: userId,
       sessionToken: session.token,
       sessionExpiresAt: session.expiresAt
     };
@@ -518,7 +532,7 @@ function dumpWorkspaceForUser_(workspaceId, userId) {
 function readUsersFromData_(data) {
   if (!data.it_users || data.it_users.deleted) return [];
   const users = safeJsonParse_(data.it_users.value, []);
-  return Array.isArray(users) ? users.filter(function(user) { return user && user.id; }) : [];
+  return Array.isArray(users) ? assignUsernames_(users) : [];
 }
 
 function requireExistingProfile_(workspaceId, userId) {
@@ -529,6 +543,24 @@ function requireExistingProfile_(workspaceId, userId) {
   return user;
 }
 
+function resolveAuthProfile_(workspaceId, usernameValue, legacyUserIdValue) {
+  const users = readUsersFromData_(dumpWorkspace_(workspaceId));
+  const username = normalizeUsername_(usernameValue);
+  if (username) {
+    const byUsername = users.find(function(user) {
+      return normalizeUsername_(user.username) === username;
+    });
+    if (!byUsername) throw authError_('INVALID_CREDENTIALS', 'Username or PIN is incorrect.');
+    return byUsername;
+  }
+
+  // Backward compatibility while an older frontend is still cached or live.
+  const legacyUserId = requireUserId_(legacyUserIdValue);
+  const byId = users.find(function(user) { return String(user.id) === legacyUserId; });
+  if (!byId) throw authError_('PROFILE_NOT_FOUND', 'Profile not found. Refresh and try again.');
+  return byId;
+}
+
 function sanitizeProfile_(rawProfile) {
   const source = rawProfile && typeof rawProfile === 'object' ? rawProfile : {};
   const id = requireUserId_(source.id);
@@ -536,12 +568,49 @@ function sanitizeProfile_(rawProfile) {
   const role = String(source.role || '').trim().slice(0, 120);
   const department = String(source.department || '').trim().slice(0, 120);
   if (!name || !role || !department) throw authError_('INVALID_PROFILE', 'Name, role, and department are required.');
+  const username = normalizeUsername_(source.username)
+    ? requireUsername_(source.username)
+    : usernameBaseFromName_(name);
   const firstName = name.split(/\s+/)[0];
   const initials = name.split(/\s+/).map(function(part) { return part.charAt(0).toUpperCase(); }).join('').slice(0, 2);
   const startDate = /^\d{4}-\d{2}-\d{2}$/.test(String(source.startDate || ''))
     ? String(source.startDate)
     : Utilities.formatDate(new Date(), 'Asia/Jakarta', 'yyyy-MM-dd');
-  return { id: id, name: name, firstName: firstName, role: role, department: department, initials: initials, startDate: startDate };
+  return { id: id, username: username, name: name, firstName: firstName, role: role, department: department, initials: initials, startDate: startDate };
+}
+
+function assignUsernames_(rawUsers) {
+  const users = Array.isArray(rawUsers) ? rawUsers.filter(function(user) { return user && user.id; }) : [];
+  const used = {};
+
+  return users.map(function(user) {
+    const copy = {};
+    Object.keys(user).forEach(function(key) { copy[key] = user[key]; });
+
+    let username = normalizeUsername_(user.username);
+    if (!isValidUsername_(username) || used[username]) {
+      const base = usernameBaseFromName_(user.name);
+      username = base;
+      let suffix = 2;
+      while (used[username]) {
+        const suffixText = String(suffix);
+        username = base.slice(0, INTERNTRACK_USERNAME_MAX_LENGTH - suffixText.length) + suffixText;
+        suffix += 1;
+      }
+    }
+
+    copy.username = username;
+    used[username] = true;
+    return copy;
+  });
+}
+
+function usernameBaseFromName_(nameValue) {
+  let value = String(nameValue || '').trim().toLowerCase();
+  if (value.normalize) value = value.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  value = value.replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, INTERNTRACK_USERNAME_MAX_LENGTH);
+  if (value.length < INTERNTRACK_USERNAME_MIN_LENGTH) value = 'intern';
+  return value;
 }
 
 function publicProfile_(user, hasPin) {
@@ -579,7 +648,17 @@ function saveAuthorizedBatch_(workspaceId, userId, changes) {
         if (currentIndex < 0) throw new Error('Authenticated profile no longer exists.');
 
         const nextUsers = existingUsers.slice();
-        if (ownSubmitted) nextUsers[currentIndex] = sanitizeProfile_(ownSubmitted);
+        if (ownSubmitted) {
+          const submittedProfile = {};
+          Object.keys(ownSubmitted).forEach(function(key) { submittedProfile[key] = ownSubmitted[key]; });
+          if (!normalizeUsername_(submittedProfile.username)) submittedProfile.username = existingUsers[currentIndex].username;
+          const sanitizedProfile = sanitizeProfile_(submittedProfile);
+          const usernameTaken = existingUsers.some(function(user) {
+            return String(user.id) !== userId && normalizeUsername_(user.username) === sanitizedProfile.username;
+          });
+          if (usernameTaken) throw authError_('USERNAME_TAKEN', 'That username is already in use.');
+          nextUsers[currentIndex] = sanitizedProfile;
+        }
         else {
           nextUsers.splice(currentIndex, 1);
           profileDeleted = true;
@@ -756,6 +835,22 @@ function requireUserId_(value) {
   const userId = String(value || '').trim();
   if (!/^[a-zA-Z0-9_-]{5,80}$/.test(userId)) throw authError_('INVALID_PROFILE', 'Invalid profile ID.');
   return userId;
+}
+
+function normalizeUsername_(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidUsername_(username) {
+  return new RegExp('^[a-z0-9][a-z0-9._-]{' + (INTERNTRACK_USERNAME_MIN_LENGTH - 1) + ',' + (INTERNTRACK_USERNAME_MAX_LENGTH - 1) + '}$').test(username);
+}
+
+function requireUsername_(value) {
+  const username = normalizeUsername_(value);
+  if (!isValidUsername_(username)) {
+    throw authError_('INVALID_USERNAME', 'Username must contain 3–30 letters, numbers, dots, underscores, or hyphens.');
+  }
+  return username;
 }
 
 function requirePin_(value) {
@@ -957,7 +1052,7 @@ function syncReadableMirrors_(workspaceId, dataRows) {
   const parsedUsers = usersRecord && !usersRecord.deleted
     ? safeJsonParse_(usersRecord.value, [])
     : [];
-  const users = Array.isArray(parsedUsers) ? parsedUsers : [];
+  const users = assignUsernames_(parsedUsers);
 
   const userRows = [];
   const attendanceRows = [];
@@ -980,6 +1075,7 @@ function syncReadableMirrors_(workspaceId, dataRows) {
     userRows.push([
       workspaceId,
       userId,
+      String(user.username || ''),
       String(user.name || ''),
       String(user.firstName || ''),
       String(user.role || ''),
