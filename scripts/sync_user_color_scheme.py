@@ -22,36 +22,53 @@ replace_once(
 )
 
 replace_once(
-    '''};
-
-/* ─── Constants ───────────────────────────────────────────── */''',
-    '''};
-
-// userSelectedColorSchemeV1: each profile owns and restores its selected palette.
+    '''const NAV_ITEMS = [''',
+    '''// userSelectedColorSchemeV1: each profile owns and restores its selected palette.
 function savedUserColorScheme(userId: string): UserColorScheme {
   const settings = LS.settings(userId) || {};
   return normalizeUserColorScheme(settings.appearance?.colorScheme);
 }
 
-/* ─── Constants ───────────────────────────────────────────── */''',
+const NAV_ITEMS = [''',
     "theme settings helper",
 )
 
-replace_once(
-    '''  const [leaving, setLeaving]   = useState(false);
+new_signin_anchor = '''  const [leaving, setLeaving]   = useState(false);
+  const [selected, setSelected] = useState<User>(users[0]);
+  const [pin, setPin] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {'''
+new_signin_replacement = '''  const [leaving, setLeaving]   = useState(false);
+  const [selected, setSelected] = useState<User>(users[0]);
+  const [pin, setPin] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (selected) applyUserColorScheme(savedUserColorScheme(selected.id));
+  }, [selected?.id]);
+
+  useEffect(() => {'''
+old_signin_anchor = '''  const [leaving, setLeaving]   = useState(false);
   const [selected, setSelected] = useState<User>(users[0]);
 
-  function enter()''',
-    '''  const [leaving, setLeaving]   = useState(false);
+  function enter()'''
+old_signin_replacement = '''  const [leaving, setLeaving]   = useState(false);
   const [selected, setSelected] = useState<User>(users[0]);
 
   useEffect(() => {
     if (selected) applyUserColorScheme(savedUserColorScheme(selected.id));
   }, [selected?.id]);
 
-  function enter()''',
-    "sign-in theme preview",
-)
+  function enter()'''
+if new_signin_anchor in source:
+    replace_once(new_signin_anchor, new_signin_replacement, "PIN sign-in theme preview")
+elif old_signin_anchor in source:
+    replace_once(old_signin_anchor, old_signin_replacement, "legacy sign-in theme preview")
+else:
+    raise RuntimeError("Could not find expected source for sign-in theme preview.")
 
 replace_once(
     '''  const actEndRef = useRef<HTMLDivElement>(null);
@@ -90,11 +107,13 @@ replace_once(
     "settings theme persistence",
 )
 
-replace_once(
-    '''    setSaved(true); setTimeout(() => setSaved(false), 2000);
+new_delete_anchor = '''    setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
-  function deleteProfile()''',
-    '''    applyUserColorScheme(colorScheme);
+  async function deleteProfile()'''
+old_delete_anchor = '''    setSaved(true); setTimeout(() => setSaved(false), 2000);
+  }
+  function deleteProfile()'''
+delete_replacement = '''    applyUserColorScheme(colorScheme);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   }
   function selectColorScheme(nextScheme: UserColorScheme) {
@@ -107,18 +126,22 @@ replace_once(
     });
     void STORE.syncNow().catch(error => console.error("Color scheme sync failed.", error));
   }
-  function deleteProfile()''',
-    "theme selection handler",
-)
+  {delete_signature}'''
+if new_delete_anchor in source:
+    replace_once(new_delete_anchor, delete_replacement.replace("{delete_signature}", "async function deleteProfile()"), "PIN theme selection handler")
+elif old_delete_anchor in source:
+    replace_once(old_delete_anchor, delete_replacement.replace("{delete_signature}", "function deleteProfile()"), "legacy theme selection handler")
+else:
+    raise RuntimeError("Could not find expected source for theme selection handler.")
 
 notification_anchor = '''      <GlassCard>
-        <div className="flex items-center gap-2 mb-5 pb-4" style={{ borderBottom:"1px solid rgba(255,255,255,0.25)" }}>
+        <div className="flex items-center gap-2 mb-5 pb-4" style={{ borderBottom:"1px solid rgba(255,255,255,0.09)" }}>
           <span className="text-sm">🔔</span>
-          <span className="font-bold text-sm text-[#3d0a20]">Notifications</span>
+          <span className="font-bold text-sm text-[#f7f7f8]">Notifications</span>
         </div>'''
 
 appearance_card = '''      <GlassCard>
-        <div className="flex items-center gap-2 mb-5 pb-4" style={{ borderBottom:"1px solid rgba(255,255,255,0.25)" }}>
+        <div className="flex items-center gap-2 mb-5 pb-4" style={{ borderBottom:"1px solid rgba(255,255,255,0.09)" }}>
           <span className="text-sm">🎨</span>
           <span className="font-bold text-sm" style={{ color:"var(--it-ink)" }}>Color Scheme</span>
         </div>
@@ -235,29 +258,3 @@ html[data-it-color-scheme] .it-app-shell [class*="border-pink-"] {
 html[data-it-color-scheme] .it-app-shell [class*="accent-pink-"] {
   accent-color: var(--it-primary) !important;
 }
-
-html[data-it-color-scheme] .it-app-shell [class*="placeholder:text-pink-"]::placeholder {
-  color: color-mix(in srgb, var(--it-accent) 45%, transparent) !important;
-}
-
-html[data-it-color-scheme] .it-app-shell [class*="hover:bg-pink-"]:hover,
-html[data-it-color-scheme] .it-signin-screen [class*="hover:bg-pink-"]:hover {
-  background-color: color-mix(in srgb, var(--it-accent-pale) 74%, white) !important;
-}
-
-html[data-it-color-scheme] .it-main input:focus,
-html[data-it-color-scheme] .it-main textarea:focus,
-html[data-it-color-scheme] .it-main select:focus {
-  border-color: rgba(var(--it-accent-rgb),0.58) !important;
-  box-shadow: 0 0 0 3px rgba(var(--it-accent-rgb),0.12), 0 6px 18px rgba(var(--it-primary-dark-rgb),0.08);
-}
-
-html[data-it-color-scheme] .it-shift-progress-glow.is-active {
-  box-shadow: 0 0 8px rgba(var(--it-accent-light-rgb),0.92), 0 0 18px rgba(var(--it-accent-rgb),0.72), 0 0 30px rgba(var(--it-primary-rgb),0.48) !important;
-}
-'''
-
-if "userSelectedColorSchemeV1: defaults" not in styles:
-    styles_path.write_text(styles.rstrip() + theme_css + "\n", encoding="utf-8")
-
-print("Synchronized the full interface with each user's selected color scheme.")
