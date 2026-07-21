@@ -15,7 +15,7 @@ import {
 
 /* ─── Types ─────────────────────────────────────────────── */
 type User = {
-  id: string; name: string; firstName: string;
+  id: string; username: string; name: string; firstName: string;
   role: string; department: string; initials: string; startDate: string;
   hasPin?: boolean;
 };
@@ -71,6 +71,13 @@ const fmtMs   = (ms: number) => { const h = Math.floor(ms/3600000), m = Math.flo
 const uid     = () => Math.random().toString(36).slice(2,9);
 const greet   = (d: Date) => { const h = d.getHours(); return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; };
 const initials = (name: string) => name.trim().split(/\s+/).map(n => n[0]?.toUpperCase() ?? "").join("").slice(0,2);
+const normalizeUsername = (value: string) => value.trim().toLowerCase();
+const usernameValidationError = (value: string) => {
+  const username = normalizeUsername(value);
+  if (!username) return "Username is required";
+  if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(username)) return "Use 3–30 letters, numbers, dots, underscores, or hyphens";
+  return "";
+};
 const localDateKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const parseLocalDateKey = (value: string) => {
   const [year, month, day] = value.split("-").map(Number);
@@ -90,7 +97,7 @@ const G = {
 function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
   const [step, setStep]       = useState<"welcome"|"register">("welcome");
   const [leaving, setLeaving] = useState(false);
-  const [form, setForm]       = useState({ name:"", role:"", department:"", pin:"", confirmPin:"" });
+  const [form, setForm]       = useState({ name:"", username:"", role:"", department:"", pin:"", confirmPin:"" });
   const [errors, setErrors]   = useState<Record<string,string>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -99,6 +106,8 @@ function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
   async function submit() {
     const e: Record<string,string> = {};
     if (!form.name.trim()) e.name = "Full name is required";
+    const usernameError = usernameValidationError(form.username);
+    if (usernameError) e.username = usernameError;
     if (!form.role.trim()) e.role = "Intern role is required";
     if (!form.department.trim()) e.department = "Department is required";
     if (!/^\d{6}$/.test(form.pin)) e.pin = "Use exactly 6 digits";
@@ -106,7 +115,7 @@ function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
     if (Object.keys(e).length) { setErrors(e); return; }
     const firstName = form.name.trim().split(" ")[0];
     const user: User = {
-      id: uid(), name: form.name.trim(), firstName,
+      id: uid(), username: normalizeUsername(form.username), name: form.name.trim(), firstName,
       role: form.role.trim(), department: form.department.trim(),
       initials: initials(form.name),
       startDate: localDateKey(new Date()),
@@ -204,6 +213,24 @@ function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
               {errors.name && <p className="text-[11px] mt-1" style={{ color:"#fb7185" }}>{errors.name}</p>}
             </div>
 
+            {/* Username */}
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color:"rgba(255,255,255,0.4)" }}>Username</label>
+              <input
+                autoComplete="username"
+                value={form.username}
+                onChange={e => { setForm(p => ({...p, username:normalizeUsername(e.target.value)})); setErrors(p => ({...p, username:"", submit:""})); }}
+                onKeyDown={e => e.key === "Enter" && submit()}
+                placeholder="e.g. mia.tanaka"
+                maxLength={30}
+                spellCheck={false}
+                autoCapitalize="none"
+                className="w-full px-4 py-3 rounded-2xl text-sm text-white outline-none transition-all placeholder:text-white/20"
+                style={{ background:"rgba(255,255,255,0.08)", border: errors.username ? "1px solid rgba(251,113,133,0.8)" : "1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}
+              />
+              {errors.username && <p className="text-[11px] mt-1" style={{ color:"#fb7185" }}>{errors.username}</p>}
+            </div>
+
             {/* Intern role */}
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color:"rgba(255,255,255,0.4)" }}>Intern Role</label>
@@ -296,6 +323,7 @@ function OnboardingScreen({ onCreated }: { onCreated: (u: User) => void }) {
    SIGN-IN  (returning users — dark, consistent with onboarding)
 ════════════════════════════════════════════════════════════ */
 function SignInScreen({ users, onSelect, onAddNew }: { users: User[]; onSelect: (u: User) => void; onAddNew: () => void }) {
+  const [username, setUsername] = useState(users[0]?.username || "");
   const [leaving, setLeaving]   = useState(false);
   const [selected, setSelected] = useState<User>(users[0]);
   const [pin, setPin] = useState("");
@@ -303,20 +331,28 @@ function SignInScreen({ users, onSelect, onAddNew }: { users: User[]; onSelect: 
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    setUsername(selected?.username || "");
     setPin("");
     setAuthError("");
   }, [selected?.id]);
 
   async function enter() {
-    if (!selected || !/^\d{6}$/.test(pin)) {
+    const usernameError = usernameValidationError(username);
+    if (usernameError) {
+      setAuthError(usernameError + ".");
+      return;
+    }
+    if (!/^\d{6}$/.test(pin)) {
       setAuthError("Enter your 6-digit PIN.");
       return;
     }
+    const matchedProfile = users.find(user => normalizeUsername(user.username) === normalizeUsername(username));
     setSubmitting(true);
     setAuthError("");
     try {
-      await STORE.unlockProfile(selected.id, pin, !selected.hasPin);
-      const hydratedUser = LS.users().find(user => user.id === selected.id) || selected;
+      const userId = await STORE.unlockProfile(normalizeUsername(username), pin, Boolean(matchedProfile && !matchedProfile.hasPin));
+      const hydratedUser = LS.users().find(user => user.id === userId) || matchedProfile;
+      if (!hydratedUser) throw new Error("Unable to load this user profile.");
       setLeaving(true);
       setTimeout(() => onSelect(hydratedUser), 650);
     } catch (error) {
@@ -332,6 +368,8 @@ function SignInScreen({ users, onSelect, onAddNew }: { users: User[]; onSelect: 
       setSubmitting(false);
     }
   }
+
+  const matchedProfile = users.find(user => normalizeUsername(user.username) === normalizeUsername(username));
 
   return (
     <div className="it-signin-screen min-h-[100dvh] flex flex-col items-center justify-center py-8 relative overflow-x-hidden overflow-y-auto"
@@ -356,13 +394,13 @@ function SignInScreen({ users, onSelect, onAddNew }: { users: User[]; onSelect: 
             <span className="text-2xl font-black text-white" style={{ letterSpacing:"-0.04em" }}>Intern</span>
             <span className="text-2xl font-black" style={{ letterSpacing:"-0.04em", background:"linear-gradient(135deg,#f472b6,#be185d)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>Track</span>
           </div>
-          <p className="text-xs" style={{ color:"rgba(255,255,255,0.35)" }}>Who's clocking in today?</p>
+          <p className="text-xs" style={{ color:"rgba(255,255,255,0.35)" }}>Sign in with your username and PIN</p>
         </div>
 
         {/* Profile cards */}
         <div className="w-full space-y-2 mb-5">
           {users.map(u => {
-            const active = u.id === selected.id;
+            const active = normalizeUsername(u.username) === normalizeUsername(username);
             return (
               <button key={u.id} onClick={() => setSelected(u)}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left transition-all"
@@ -373,7 +411,7 @@ function SignInScreen({ users, onSelect, onAddNew }: { users: User[]; onSelect: 
                 <DarkAvatar initials={u.initials} size={36} active={active} />
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-sm text-white truncate">{u.name}</p>
-                  <p className="text-[11px] truncate" style={{ color:"rgba(255,255,255,0.4)" }}>{u.role}</p>
+                  <p className="text-[11px] truncate" style={{ color:"rgba(255,255,255,0.4)" }}>@{u.username} · {u.role}</p>
                 </div>
                 <div className="w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-all"
                   style={{ borderColor: active ? "#e11d48" : "rgba(255,255,255,0.2)", background: active ? "#e11d48" : "transparent" }}>
@@ -384,15 +422,35 @@ function SignInScreen({ users, onSelect, onAddNew }: { users: User[]; onSelect: 
           })}
         </div>
 
+        <div className="w-full mb-3">
+          <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5 px-1" style={{ color:"rgba(255,255,255,0.42)" }}>
+            Username
+          </label>
+          <input
+            autoFocus
+            type="text"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            maxLength={30}
+            value={username}
+            onChange={event => { setUsername(normalizeUsername(event.target.value)); setAuthError(""); }}
+            onKeyDown={event => event.key === "Enter" && void enter()}
+            placeholder="your.username"
+            aria-label="Username"
+            className="w-full px-4 py-3 rounded-2xl text-sm text-white outline-none transition-all placeholder:text-white/20"
+            style={{ background:"rgba(255,255,255,0.08)", border:authError && !/^\d{6}$/.test(pin) ? "1px solid rgba(251,113,133,0.75)" : "1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}
+          />
+        </div>
+
         <div className="w-full mb-4">
           <div className="flex items-center justify-between mb-1.5 px-1">
             <label className="text-[10px] font-semibold uppercase tracking-widest" style={{ color:"rgba(255,255,255,0.42)" }}>
-              {selected?.hasPin ? "Security PIN" : "Create security PIN"}
+              {matchedProfile?.hasPin !== false ? "Security PIN" : "Create security PIN"}
             </label>
-            {!selected?.hasPin && <span className="text-[9px]" style={{ color:"rgba(255,255,255,0.32)" }}>First secure sign-in</span>}
+            {matchedProfile?.hasPin === false && <span className="text-[9px]" style={{ color:"rgba(255,255,255,0.32)" }}>First secure sign-in</span>}
           </div>
           <input
-            autoFocus
             type="password"
             inputMode="numeric"
             autoComplete="current-password"
@@ -401,22 +459,22 @@ function SignInScreen({ users, onSelect, onAddNew }: { users: User[]; onSelect: 
             onChange={event => { setPin(event.target.value.replace(/\D/g, "").slice(0, 6)); setAuthError(""); }}
             onKeyDown={event => event.key === "Enter" && void enter()}
             placeholder="••••••"
-            aria-label={selected?.hasPin ? "Enter 6-digit PIN" : "Create a 6-digit PIN"}
+            aria-label={matchedProfile?.hasPin === false ? "Create a 6-digit PIN" : "Enter 6-digit PIN"}
             className="w-full px-4 py-3.5 rounded-2xl text-center text-base text-white tracking-[0.55em] outline-none transition-all placeholder:text-white/20"
             style={{ background:"rgba(255,255,255,0.08)", border:authError ? "1px solid rgba(251,113,133,0.75)" : "1px solid rgba(255,255,255,0.14)", backdropFilter:"blur(12px)" }}
           />
           {authError && <p role="alert" className="text-[11px] mt-1.5 px-1 leading-4" style={{ color:"#fb7185" }}>{authError}</p>}
-          {!selected?.hasPin && !authError && (
+          {matchedProfile?.hasPin === false && !authError && (
             <p className="text-[10px] mt-1.5 px-1 leading-4" style={{ color:"rgba(255,255,255,0.34)" }}>
               This existing profile has no PIN yet. The PIN you enter now will become its PIN.
             </p>
           )}
         </div>
 
-        <button onClick={() => void enter()} disabled={submitting || pin.length !== 6}
+        <button onClick={() => void enter()} disabled={submitting || Boolean(usernameValidationError(username)) || pin.length !== 6}
           className="w-full py-3.5 rounded-full font-bold text-sm text-[#0c0c0e] mb-3 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:scale-100"
           style={{ background:"#ffffff", boxShadow:"0 4px 24px rgba(255,255,255,0.18)" }}>
-          {submitting ? "Verifying…" : selected?.hasPin ? "Verify & Enter" : "Set PIN & Enter"}
+          {submitting ? "Verifying…" : matchedProfile?.hasPin === false ? "Set PIN & Enter" : "Verify & Enter"}
         </button>
 
         <button onClick={onAddNew} disabled={submitting}
@@ -732,7 +790,7 @@ function InternTrackApp() {
               <GlassAvatar initials={user.initials} size={30} />
               <div className="flex-1 min-w-0 text-left">
                 <p className="text-xs font-semibold text-[#3d0a20] truncate leading-tight">{user.name}</p>
-                <p className="text-[10px] text-pink-400 truncate">{user.role}</p>
+                <p className="text-[10px] text-pink-400 truncate">@{user.username}</p>
               </div>
               <ChevronDown size={12} className="text-pink-300 shrink-0 transition-transform" style={{ transform: internOpen ? "rotate(180deg)" : "none" }} />
             </button>
@@ -741,13 +799,13 @@ function InternTrackApp() {
               <div className="absolute bottom-full left-0 right-0 mb-1 rounded-xl overflow-hidden z-30"
                 style={{ background:"rgba(255,255,255,0.88)", backdropFilter:"blur(20px)", boxShadow:"0 -8px 32px rgba(180,30,80,0.18)", border:"1px solid rgba(255,255,255,0.5)" }}>
                 {allUsers.map(u => (
-                  <button key={u.id} onClick={() => { setUser(u); setInternOpen(false); }}
+                  <button key={u.id} onClick={() => { setInternOpen(false); void secureSignOut(); }}
                     className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-pink-50 transition-colors text-left"
                     style={{ borderBottom:"1px solid rgba(244,114,182,0.1)" }}>
                     <GlassAvatar initials={u.initials} size={24} />
                     <div>
                       <p className="text-xs font-semibold text-[#3d0a20]">{u.name}</p>
-                      <p className="text-[10px] text-pink-400">{u.role}</p>
+                      <p className="text-[10px] text-pink-400">@{u.username}</p>
                     </div>
                   </button>
                 ))}
@@ -2580,6 +2638,7 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
 }) {
   const storedSettings = LS.settings(user.id) || {};
   const [form, setForm]       = useState({
+    username:user.username,
     name:user.name,
     role:user.role,
     department:user.department,
@@ -2594,6 +2653,7 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
     mentorUpdates: storedSettings.notifications?.mentorUpdates ?? true,
     systemAlerts: storedSettings.notifications?.systemAlerts ?? true,
   });
+  const [saveError, setSaveError] = useState("");
   const [localHours, setLocalHours] = useState(workHours);
   const [saved, setSaved]     = useState(false);
   const [showDanger, setShowDanger] = useState(false);
@@ -2602,7 +2662,14 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
   const previewEnd = new Date(Date.now() + localHours * 3600000);
 
   function save() {
-    const updated: User = { ...user, name:form.name.trim(), firstName:form.name.trim().split(" ")[0], role:form.role, department:form.department, initials:initials(form.name) };
+    const usernameError = usernameValidationError(form.username);
+    if (usernameError) { setSaveError(usernameError + "."); return; }
+    const nextUsername = normalizeUsername(form.username);
+    const duplicate = LS.users().some(entry => entry.id !== user.id && normalizeUsername(entry.username) === nextUsername);
+    if (duplicate) { setSaveError("That username is already in use."); return; }
+    if (!form.name.trim() || !form.role.trim() || !form.department.trim()) { setSaveError("Name, role, and department are required."); return; }
+    setSaveError("");
+    const updated: User = { ...user, username:nextUsername, name:form.name.trim(), firstName:form.name.trim().split(" ")[0], role:form.role.trim(), department:form.department.trim(), initials:initials(form.name) };
     onUserChange(updated);
     onWorkHoursChange(localHours);
     LS.saveSettings(user.id, {
@@ -2639,11 +2706,12 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
           <GlassAvatar initials={initials(form.name||user.name)} size={56} />
           <div>
             <p className="font-semibold text-[#3d0a20] text-sm">{form.name || user.name}</p>
-            <p className="text-xs text-pink-400 mt-0.5">{form.role}</p>
+            <p className="text-xs text-pink-400 mt-0.5">@{form.username || user.username} · {form.role}</p>
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {([
+            ["Username",         "username",   "text",  "e.g. mia.tanaka"],
             ["Full Name",        "name",       "text",  "e.g. Mia Tanaka"],
             ["Role",             "role",       "text",  "e.g. Design Intern"],
             ["Department",       "department", "text",  "e.g. Product Design"],
@@ -2656,8 +2724,12 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
               <input
                 type={type}
                 value={(form as any)[key]}
-                onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}
+                onChange={e => { setForm(p => ({ ...p, [key]: key === "username" ? normalizeUsername(e.target.value) : e.target.value })); setSaveError(""); }}
                 placeholder={placeholder}
+                maxLength={key === "username" ? 30 : undefined}
+                autoComplete={key === "username" ? "username" : undefined}
+                autoCapitalize={key === "username" ? "none" : undefined}
+                spellCheck={key === "username" ? false : undefined}
                 className={inputCls + " placeholder:text-pink-200/60"}
                 style={G.input}
               />
@@ -2744,6 +2816,8 @@ function SettingsView({ user, workHours, onWorkHoursChange, onUserChange, onSign
           </div>
         ))}
       </GlassCard>
+
+      {saveError && <p role="alert" className="text-xs px-1" style={{ color:"#be123c" }}>{saveError}</p>}
 
       <div className="it-settings-actions flex items-center justify-between gap-3 pb-2">
         <button onClick={() => setShowDanger(v=>!v)}
