@@ -258,3 +258,29 @@ html[data-it-color-scheme] .it-app-shell [class*="border-pink-"] {
 html[data-it-color-scheme] .it-app-shell [class*="accent-pink-"] {
   accent-color: var(--it-primary) !important;
 }
+
+html[data-it-color-scheme] .it-app-shell [class*="placeholder:text-pink-"]::placeholder {
+  color: color-mix(in srgb, var(--it-accent) 45%, transparent) !important;
+}
+
+html[data-it-color-scheme] .it-app-shell [class*="hover:bg-pink-"]:hover,
+html[data-it-color-scheme] .it-signin-screen [class*="hover:bg-pink-"]:hover {
+  background-color: color-mix(in srgb, var(--it-accent-pale) 74%, white) !important;
+}
+
+html[data-it-color-scheme] .it-main input:focus,
+html[data-it-color-scheme] .it-main textarea:focus,
+html[data-it-color-scheme] .it-main select:focus {
+  border-color: rgba(var(--it-accent-rgb),0.58) !important;
+  box-shadow: 0 0 0 3px rgba(var(--it-accent-rgb),0.12), 0 6px 18px rgba(var(--it-primary-dark-rgb),0.08);
+}
+
+html[data-it-color-scheme] .it-shift-progress-glow.is-active {
+  box-shadow: 0 0 8px rgba(var(--it-accent-light-rgb),0.92), 0 0 18px rgba(var(--it-accent-rgb),0.72), 0 0 30px rgba(var(--it-primary-rgb),0.48) !important;
+}
+'''
+
+if "userSelectedColorSchemeV1: defaults" not in styles:
+    styles_path.write_text(styles.rstrip() + theme_css + "\n", encoding="utf-8")
+
+print("Synchronized the full interface with each user's selected color scheme.")
